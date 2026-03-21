@@ -747,10 +747,149 @@ A single migration should:
 1. Notification templates for book events
 2. Blocklist/watchlist support for books
 3. i18n for all new strings
-4. E2E tests for book request workflow
+4. Unit and E2E tests (see Section 7.1)
 5. API documentation updates
 6. `permissions2` bigint column migration (unblocks future book permission expansion)
 7. Book-specific placeholder image (`/images/seerr_book_not_found.png`)
+
+### 7.1 Testing Requirements
+
+The project uses `node:test` + supertest for unit/integration tests and Cypress for E2E tests. Book support tests follow the same patterns and tooling.
+
+**Guiding principle:** Tests should verify book-specific behavior without duplicating coverage of generic infrastructure that already works for movies/TV (e.g., notification dispatch, permission bitmask math, TypeORM save/load). Focus on the new code paths and the boundaries between systems.
+
+#### Unit / Integration Tests (`server/**/*.test.ts`)
+
+Tests use `node:test`, supertest for HTTP assertions, and the existing `setupTestDb()` helper for database isolation (fresh DB per test).
+
+**Open Library API client** (`server/api/openlibrary/index.test.ts`):
+| Test | What it verifies |
+|---|---|
+| `searchBooks` returns mapped results | Response shape matches `OLSearchResponse`; pagination fields pass through |
+| `searchBooks` handles empty results | Returns `{ numFound: 0, docs: [] }` gracefully |
+| `getWork` normalizes description | Handles both `string` and `{ value: string }` description formats from OL |
+| `getWork` handles missing fields | Missing covers, subjects, authors default to empty arrays |
+| `getEditionByISBN` follows redirect | ISBN endpoint redirects to edition; client follows and returns edition data |
+| `getCoverUrl` builds correct URL | Validates URL format for each size (S/M/L) and key type (id, isbn, olid) |
+| `getAuthorPhotoUrl` builds correct URL | Validates author photo URL format |
+| Caching works | Second identical call returns cached response without HTTP request |
+
+**Book routes** (`server/routes/book.test.ts`):
+| Test | What it verifies |
+|---|---|
+| `GET /api/v1/book/:id` returns book details | Calls `OpenLibraryAPI.getWork`, returns mapped response with `coverUrl` |
+| `GET /api/v1/book/:id` returns 404 for unknown OLID | Graceful error when OL returns no data |
+| `GET /api/v1/book/:id/editions` returns edition list | Calls OL editions endpoint, maps to response format |
+| `GET /api/v1/author/:id` returns author details | Calls `OpenLibraryAPI.getAuthor`, includes photo URL |
+| `GET /api/v1/author/:id/works` returns paginated works | Pagination params pass through correctly |
+
+**Search route — book mode** (`server/routes/search.test.ts`):
+| Test | What it verifies |
+|---|---|
+| `GET /search?query=dune` (no type) calls TMDb only | No Open Library request made; existing behavior preserved |
+| `GET /search?query=dune&type=book` calls Open Library only | No TMDb request made; returns book results with `media_type: 'book'` |
+| Book search results include `coverUrl` | Each result has a pre-built cover URL or null |
+| Book search results include media status | Cross-references DB for existing Media entities with `mediaType='book'` |
+
+**Request route — book handling** (`server/routes/request.test.ts`):
+| Test | What it verifies |
+|---|---|
+| Book request requires `REQUEST_BOOK` permission | Returns 403 without permission; succeeds with it |
+| Book request respects book quota | Rejects when quota exceeded; allows when within quota |
+| Book request creates Media entity with `openLibraryId` | DB record has correct `mediaType='book'` and `openLibraryId` |
+| Book request stores ISBN-13 on Media entity | Best ISBN from OL editions is persisted |
+| Book request with `AUTO_APPROVE_BOOK` auto-approves | Status is `APPROVED` immediately; notification sent |
+| Book request without auto-approve is `PENDING` | Status is `PENDING`; notification sent |
+| Duplicate book request is rejected | Returns error if same `openLibraryId` already has an active request |
+
+**ISBN bridge / fulfillment logic** (`server/lib/bookFulfillment.test.ts`):
+| Test | What it verifies |
+|---|---|
+| Approved request looks up book by ISBN in Bookshelf | `BookshelfAPI.lookupBook(isbn)` is called first |
+| Falls back to title+author when no ISBN | `BookshelfAPI.lookupBook("Title Author")` is called |
+| Calls `addBook` with Bookshelf's foreign ID | Uses the ID from Bookshelf's lookup response, not the OL ID |
+| Sets request to FAILED when Bookshelf lookup returns nothing | Request status updated; no `addBook` call made |
+| Triggers search after adding book | `BookshelfAPI.searchBook()` called when `searchNow: true` |
+
+**Bookshelf settings routes** (`server/routes/settings/bookshelf.test.ts`):
+| Test | What it verifies |
+|---|---|
+| `POST /settings/bookshelf` creates instance | Settings file updated; auto-increment ID assigned |
+| `POST /settings/bookshelf` enforces single default | Setting new default unsets previous default |
+| `PUT /settings/bookshelf/:id` updates instance | Existing instance modified; others untouched |
+| `DELETE /settings/bookshelf/:id` removes instance | Instance removed from settings; 404 on re-fetch |
+| `POST /settings/bookshelf/test` validates connection | Calls `BookshelfAPI.getSystemStatus`, returns profiles/folders/tags |
+| `POST /settings/bookshelf/test` with bad credentials returns 500 | Returns "Failed to connect" message |
+
+**Regression: movie/TV unaffected** (`server/routes/search.test.ts`, `server/routes/request.test.ts`):
+| Test | What it verifies |
+|---|---|
+| Movie search unchanged | `GET /search?query=dune` returns same results as before book support |
+| Movie request unchanged | `POST /request` with `mediaType: 'movie'` works identically |
+| TV request unchanged | `POST /request` with `mediaType: 'tv'` works identically |
+
+#### E2E Tests (`cypress/e2e/`)
+
+E2E tests use Cypress with the existing `cy.loginAsAdmin()` / `cy.loginAsUser()` session helpers and the test database seeded via `prepareTestDb.ts`.
+
+**Book search flow** (`cypress/e2e/book-search.cy.ts`):
+- Default search shows Movies/TV results (no book results present)
+- Clicking "Books" filter switches to book results from Open Library
+- Book results display cover image, title, author, year
+- Clicking a book result navigates to `/book/[bookId]`
+- Switching back to "Movies/TV" restores TMDb results
+- Search filter state persists in URL (`?searchType=book`)
+
+**Book detail page** (`cypress/e2e/book-details.cy.ts`):
+- Book detail page loads with cover, title, author, description
+- Author name links to `/author/[authorId]`
+- Editions section lists available formats
+- Request button is visible for users with `REQUEST_BOOK` permission
+- Request button is hidden for users without permission
+
+**Book request flow** (`cypress/e2e/book-request.cy.ts`):
+- User can request a book (ebook format)
+- Request appears in pending requests list
+- Admin can approve the request
+- After approval, status updates on the book detail page
+- User can request audiobook format for same book (separate request)
+
+**Bookshelf settings** (`cypress/e2e/settings/bookshelf.cy.ts`):
+- "Add Bookshelf Server" button appears on services page
+- Modal opens with correct default values (port 8787)
+- Profile/folder/tag dropdowns are disabled before test
+- Test connection flow enables dropdowns (requires mock or test Bookshelf instance)
+- Save creates server instance card on services page
+- Edit modal pre-fills existing values
+- Delete removes the card
+
+**Regression** — existing Cypress tests (`movie-details.cy.ts`, `tv-details.cy.ts`, `discover.cy.ts`) must continue to pass without modification. This is the primary gate for the core tenet.
+
+#### Test Data
+
+**Database seeding** — extend `seedTestDb.ts` to:
+- Create a test Media entity with `mediaType: 'book'` and `openLibraryId: 'OL45804W'` (Dune)
+- Create a test MediaRequest for that book in `PENDING` status
+- Ensure existing movie/TV seed data is unchanged
+
+**Cypress fixtures** — add `cypress/fixtures/book-search.json` and `cypress/fixtures/book-details.json` with sample Open Library API responses for deterministic E2E testing (intercept OL API calls with `cy.intercept`).
+
+#### New Test Files
+
+| File | Framework | What it covers |
+|---|---|---|
+| `server/api/openlibrary/index.test.ts` | node:test | OL API client methods, caching, URL building |
+| `server/routes/book.test.ts` | node:test + supertest | Book and author detail routes |
+| `server/routes/search.test.ts` | node:test + supertest | Book search mode + regression for movie/TV search |
+| `server/routes/request.test.ts` | node:test + supertest | Book request creation, permissions, quotas + regression |
+| `server/lib/bookFulfillment.test.ts` | node:test | ISBN bridge logic, Bookshelf lookup/add, failure handling |
+| `server/routes/settings/bookshelf.test.ts` | node:test + supertest | Bookshelf settings CRUD, test connection, default logic |
+| `cypress/e2e/book-search.cy.ts` | Cypress | Search filter toggle, book results rendering |
+| `cypress/e2e/book-details.cy.ts` | Cypress | Book detail page content, author links, permissions |
+| `cypress/e2e/book-request.cy.ts` | Cypress | Full request→approve flow for books |
+| `cypress/e2e/settings/bookshelf.cy.ts` | Cypress | Bookshelf server configuration UI |
+| `cypress/fixtures/book-search.json` | Fixture | Sample OL search response |
+| `cypress/fixtures/book-details.json` | Fixture | Sample OL work/edition response |
 
 ---
 
