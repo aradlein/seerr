@@ -593,16 +593,100 @@ New discover pages (Phase 4, lower priority):
 
 Open Library does not have strong "trending" or "popular" data, so the existing Trending page does **not** add a book option. This can be revisited if a suitable data source emerges.
 
-### 5.4 Settings UI
+### 5.4 Bookshelf Settings UI
 
-Add a "Book Services" section in settings (`src/components/Settings/`):
-- Bookshelf server configuration (hostname, port, API key, SSL, base URL)
-- Quality profile selection
-- Root folder selection
-- Default tags
-- Test connection button
+The Bookshelf configuration experience mirrors the existing Radarr/Sonarr settings exactly. Users configure it from the same **Settings → Services** page.
 
-This follows the exact same UI pattern as the existing Radarr/Sonarr settings pages.
+#### Services page changes (`SettingsServices.tsx`)
+
+The existing services page shows Radarr and Sonarr sections as grids of server instance cards. Add a third section:
+
+```
+┌─────────────────────────────────────────────────┐
+│  Radarr                                         │
+│  ┌──────────┐  ┌──────────┐  ┌─ ─ ─ ─ ─ ─┐    │
+│  │ Server 1 │  │ Server 2 │  │ + Add      │    │
+│  │ Default  │  │ 4K       │  │   Radarr   │    │
+│  └──────────┘  └──────────┘  └─ ─ ─ ─ ─ ─┘    │
+│                                                  │
+│  Sonarr                                         │
+│  ┌──────────┐  ┌─ ─ ─ ─ ─ ─┐                   │
+│  │ Server 1 │  │ + Add      │                   │
+│  │ Default  │  │   Sonarr   │                   │
+│  └──────────┘  └─ ─ ─ ─ ─ ─┘                   │
+│                                                  │
+│  Bookshelf                          ← NEW       │
+│  ┌──────────┐  ┌─ ─ ─ ─ ─ ─┐                   │
+│  │ Server 1 │  │ + Add      │                   │
+│  │ Default  │  │  Bookshelf │                   │
+│  └──────────┘  └─ ─ ─ ─ ─ ─┘                   │
+│                                                  │
+│  Override Rules                                  │
+│  ...                                             │
+└─────────────────────────────────────────────────┘
+```
+
+Each Bookshelf server instance card shows:
+- Server name (links to external URL if configured)
+- Status badges: "Default", "SSL" (no 4K concept for books — see note below)
+- Internal address (`http://hostname:port`)
+- Active quality profile name
+- Edit / Delete buttons
+
+**Validation alerts** (same pattern as Radarr/Sonarr):
+- Alert if no Bookshelf servers are configured but book requests are enabled
+- Alert if no default Bookshelf server is set
+
+#### BookshelfModal (`src/components/Settings/BookshelfModal/index.tsx`)
+
+A Formik-validated modal for adding/editing Bookshelf instances. Opens when clicking "Add Bookshelf Server" or the edit button on an existing card.
+
+**Form fields:**
+
+| Field | Type | Default | Required | Notes |
+|---|---|---|---|---|
+| `isDefault` | Checkbox | false | No | Only one default allowed; setting new default unsets previous |
+| `name` | Text input | — | Yes | Display name for the instance |
+| `hostname` | Text input | — | Yes | Hostname or IP |
+| `port` | Number input | 8787 | Yes | Bookshelf default port |
+| `ssl` | Checkbox | false | No | Use SSL |
+| `apiKey` | SensitiveInput | — | Yes | Bookshelf API key |
+| `baseUrl` | Text input | — | No | URL base path (e.g., `/bookshelf`) |
+| `activeProfileId` | Dropdown | — | Yes | Quality profile — **disabled until test succeeds** |
+| `rootFolder` | Dropdown | — | Yes | Root folder — **disabled until test succeeds** |
+| `tags` | Multi-select | [] | No | Tags — **disabled until test succeeds** |
+| `externalUrl` | Text input | — | No | External-facing URL for link rendering |
+| `syncEnabled` | Checkbox | false | No | Enable library scan sync |
+| `enableSearch` | Checkbox | true | No | Enable automatic search on add |
+| `tagRequests` | Checkbox | false | No | Auto-tag requests with user info |
+
+**No 4K / format split at the instance level.** Unlike Radarr (which has separate 4K instances), Bookshelf handles ebook and audiobook quality profiles within a single instance. The ebook/audiobook distinction is made at request time via the `mediaFormat` field, not at the server level. This keeps configuration simpler.
+
+#### Test connection flow
+
+1. User fills in hostname, port, API key, base URL, SSL
+2. User clicks **"Test"** button
+3. Frontend sends `POST /api/v1/settings/bookshelf/test` with connection details
+4. Backend creates `BookshelfAPI` instance, calls:
+   - `getSystemStatus()` → validates connection, gets URL base
+   - `getProfiles()` → fetches quality profiles
+   - `getRootFolders()` → fetches root folders
+   - `getTags()` → fetches available tags
+5. On success:
+   - Toast: "Bookshelf connection established"
+   - Profile, root folder, and tag dropdowns become enabled and populated
+6. On failure:
+   - Toast error: "Failed to connect to Bookshelf"
+   - Dropdowns remain disabled
+
+This is identical to the Radarr/Sonarr test flow since Bookshelf speaks the same Servarr v1 API.
+
+#### Save flow
+
+- **New server:** `POST /api/v1/settings/bookshelf` — backend assigns auto-increment ID, handles default-server logic (unsets previous default)
+- **Edit server:** `PUT /api/v1/settings/bookshelf/:id`
+- **Delete server:** `DELETE /api/v1/settings/bookshelf/:id`
+- After save, `mutate()` refreshes the settings SWR cache and the services page re-renders with the updated card grid
 
 ### 5.5 Permissions UI
 
@@ -723,7 +807,7 @@ A single migration should:
 | `src/components/BookDetails/index.tsx` | Book detail component |
 | `src/components/AuthorDetails/index.tsx` | Author detail component |
 | `src/components/Search/SearchFilter.tsx` | Movies/TV \| Books toggle control |
-| `src/components/Settings/SettingsBookshelf.tsx` | Bookshelf settings UI |
+| `src/components/Settings/BookshelfModal/index.tsx` | Bookshelf add/edit modal (mirrors RadarrModal) |
 | `public/images/seerr_book_not_found.png` | Book-specific placeholder cover image |
 | `server/migration/*-AddBookSupport.ts` | Database migration |
 
@@ -745,5 +829,5 @@ A single migration should:
 | `src/components/TitleCard/index.tsx` | Add `'book'` mediaType handling: green badge, author subtitle, `/book/` link routing |
 | `src/components/Common/CachedImage/index.tsx` | Add `covers.openlibrary.org` → `/imageproxy/openlibrary/` rewrite rule |
 | `src/components/Common/ListView/index.tsx` | Add `'book'` case to mediaType switch for rendering book results |
-| `src/components/Settings/index.tsx` | Add Bookshelf settings navigation |
+| `src/components/Settings/SettingsServices.tsx` | Add Bookshelf section (instance cards, "Add Bookshelf Server" button, validation alerts) |
 | `src/components/UserProfile/index.tsx` | Add book quota display |
