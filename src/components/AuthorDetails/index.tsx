@@ -167,7 +167,7 @@ const AuthorDetails = ({ author }: AuthorDetailsProps) => {
             items={works.map((work) => (
               <TitleCard
                 key={work.id}
-                id={work.id as unknown as number}
+                id={work.id}
                 image={work.coverUrl}
                 title={work.title}
                 year={

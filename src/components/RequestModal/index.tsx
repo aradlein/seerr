@@ -1,3 +1,4 @@
+import BookRequestModal from '@app/components/RequestModal/BookRequestModal';
 import CollectionRequestModal from '@app/components/RequestModal/CollectionRequestModal';
 import MovieRequestModal from '@app/components/RequestModal/MovieRequestModal';
 import TvRequestModal from '@app/components/RequestModal/TvRequestModal';
@@ -10,6 +11,7 @@ interface RequestModalProps {
   show: boolean;
   type: 'movie' | 'tv' | 'collection' | 'book';
   tmdbId: number;
+  openLibraryId?: string;
   is4k?: boolean;
   editRequest?: NonFunctionProperties<MediaRequest>;
   onComplete?: (newStatus: MediaStatus) => void;
@@ -21,6 +23,7 @@ const RequestModal = ({
   type,
   show,
   tmdbId,
+  openLibraryId,
   is4k,
   editRequest,
   onComplete,
@@ -55,6 +58,13 @@ const RequestModal = ({
           onUpdating={onUpdating}
           is4k={is4k}
           editRequest={editRequest}
+        />
+      ) : type === 'book' ? (
+        <BookRequestModal
+          onComplete={onComplete}
+          onCancel={onCancel}
+          openLibraryId={openLibraryId ?? ''}
+          onUpdating={onUpdating}
         />
       ) : (
         <CollectionRequestModal

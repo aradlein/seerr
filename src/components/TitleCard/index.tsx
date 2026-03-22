@@ -280,22 +280,23 @@ const TitleCard = ({
       data-testid="title-card"
       ref={cardRef}
     >
-      {mediaType !== 'book' && (
-        <RequestModal
-          tmdbId={id as number}
-          show={showRequestModal}
-          type={
-            mediaType === 'movie'
-              ? 'movie'
-              : mediaType === 'collection'
-                ? 'collection'
+      <RequestModal
+        tmdbId={mediaType === 'book' ? 0 : (id as number)}
+        openLibraryId={mediaType === 'book' ? (id as string) : undefined}
+        show={showRequestModal}
+        type={
+          mediaType === 'movie'
+            ? 'movie'
+            : mediaType === 'collection'
+              ? 'collection'
+              : mediaType === 'book'
+                ? 'book'
                 : 'tv'
-          }
-          onComplete={requestComplete}
-          onUpdating={requestUpdating}
-          onCancel={closeModal}
-        />
-      )}
+        }
+        onComplete={requestComplete}
+        onUpdating={requestUpdating}
+        onCancel={closeModal}
+      />
       {mediaType !== 'book' && (
         <BlocklistModal
           tmdbId={id as number}

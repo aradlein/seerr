@@ -2,6 +2,7 @@ import CachedImage from '@app/components/Common/CachedImage';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tag from '@app/components/Common/Tag';
+import RequestButton from '@app/components/RequestButton';
 import Slider from '@app/components/Slider';
 import TitleCard from '@app/components/TitleCard';
 import ErrorPage from '@app/pages/_error';
@@ -38,12 +39,13 @@ const BookDetails = ({ book }: BookDetailsProps) => {
   const router = useRouter();
   const intl = useIntl();
 
-  const { data, error } = useSWR<BookDetailsType>(
-    `/api/v1/book/${router.query.bookId}`,
-    {
-      fallbackData: book,
-    }
-  );
+  const {
+    data,
+    error,
+    mutate: revalidate,
+  } = useSWR<BookDetailsType>(`/api/v1/book/${router.query.bookId}`, {
+    fallbackData: book,
+  });
 
   const { data: similarData } = useSWR<SimilarBooksResponse>(
     `/api/v1/book/${router.query.bookId}/similar`
@@ -130,6 +132,13 @@ const BookDetails = ({ book }: BookDetailsProps) => {
               ))}
             </div>
           )}
+          <div className="media-actions mt-4">
+            <RequestButton
+              mediaType="book"
+              tmdbId={0}
+              onUpdate={() => revalidate()}
+            />
+          </div>
           <span className="media-attributes">
             {bookAttributes.length > 0 &&
               bookAttributes
@@ -210,7 +219,7 @@ const BookDetails = ({ book }: BookDetailsProps) => {
             items={similarBooks.map((book) => (
               <TitleCard
                 key={book.id}
-                id={book.id as unknown as number}
+                id={book.id}
                 image={book.coverUrl}
                 title={book.title}
                 year={book.firstPublishYear?.toString()}

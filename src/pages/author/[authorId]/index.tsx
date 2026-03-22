@@ -14,22 +14,26 @@ const AuthorPage: NextPage<AuthorPageProps> = ({ author }) => {
 export const getServerSideProps: GetServerSideProps<AuthorPageProps> = async (
   ctx
 ) => {
-  const response = await axios.get<AuthorResult>(
-    `http://${process.env.HOST || 'localhost'}:${
-      process.env.PORT || 5055
-    }/api/v1/author/${ctx.query.authorId}`,
-    {
-      headers: ctx.req?.headers?.cookie
-        ? { cookie: ctx.req.headers.cookie }
-        : undefined,
-    }
-  );
+  try {
+    const response = await axios.get<AuthorResult>(
+      `http://${process.env.HOST || 'localhost'}:${
+        process.env.PORT || 5055
+      }/api/v1/author/${ctx.query.authorId}`,
+      {
+        headers: ctx.req?.headers?.cookie
+          ? { cookie: ctx.req.headers.cookie }
+          : undefined,
+      }
+    );
 
-  return {
-    props: {
-      author: response.data,
-    },
-  };
+    return {
+      props: {
+        author: response.data,
+      },
+    };
+  } catch {
+    return { notFound: true };
+  }
 };
 
 export default AuthorPage;
