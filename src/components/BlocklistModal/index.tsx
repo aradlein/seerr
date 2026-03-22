@@ -10,7 +10,7 @@ import { useIntl } from 'react-intl';
 
 interface BlocklistModalProps {
   tmdbId: number;
-  type: 'movie' | 'tv' | 'collection';
+  type: 'movie' | 'tv' | 'collection' | 'book';
   show: boolean;
   onComplete?: () => void;
   onCancel?: () => void;

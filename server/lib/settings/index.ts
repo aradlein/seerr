@@ -102,10 +102,8 @@ export interface SonarrSettings extends DVRSettings {
   monitorNewItems: 'all' | 'none';
 }
 
-export interface BookshelfSettings extends DVRSettings {
-  // Uses same DVR settings as Radarr/Sonarr.
-  // No additional fields needed for v1.
-}
+// Uses same DVR settings as Radarr/Sonarr. No additional fields needed for v1.
+export type BookshelfSettings = DVRSettings;
 
 interface Quota {
   quotaLimit?: number;
