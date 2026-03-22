@@ -173,6 +173,11 @@ requestRoutes.get<Record<string, unknown>, RequestResultsResponse>(
             type: MediaType.TV,
           });
           break;
+        case 'book':
+          query = query.andWhere('request.type = :type', {
+            type: MediaType.BOOK,
+          });
+          break;
       }
 
       const [requests, requestCount] = await query
@@ -599,6 +604,14 @@ requestRoutes.put<{ requestId: string }>(
             )
           );
         }
+
+        await requestRepository.save(request);
+      } else if (req.body.mediaType === MediaType.BOOK) {
+        request.serverId = req.body.serverId;
+        request.profileId = req.body.profileId;
+        request.rootFolder = req.body.rootFolder;
+        request.tags = req.body.tags;
+        request.requestedBy = requestUser as User;
 
         await requestRepository.save(request);
       }

@@ -1,8 +1,10 @@
+import OpenLibraryAPI from '@server/api/openlibrary';
 import TheMovieDb from '@server/api/themoviedb';
 import type { TmdbSearchMultiResponse } from '@server/api/themoviedb/interfaces';
 import Media from '@server/entity/Media';
 import { findSearchProvider } from '@server/lib/search';
 import logger from '@server/logger';
+import { mapSearchResultToBookResult } from '@server/models/Book';
 import { mapSearchResults } from '@server/models/Search';
 import { Router } from 'express';
 
@@ -10,10 +12,39 @@ const searchRoutes = Router();
 
 searchRoutes.get('/', async (req, res, next) => {
   const queryString = req.query.query as string;
-  const searchProvider = findSearchProvider(queryString.toLowerCase());
-  let results: TmdbSearchMultiResponse;
+  const searchType = req.query.type as string | undefined;
 
   try {
+    // Book search: Open Library only
+    if (searchType === 'book') {
+      const olApi = new OpenLibraryAPI();
+      const olResults = await olApi.searchBooks({
+        query: queryString,
+        page: Number(req.query.page) || 1,
+        limit: 20,
+      });
+
+      const bookResults = olResults.docs.map(mapSearchResultToBookResult);
+
+      // Cross-reference with existing Media entities for status
+      const mediaPromises = bookResults.map(async (book) => {
+        const media = await Media.getMediaByOpenLibraryId(book.id);
+        return { ...book, mediaInfo: media ?? undefined };
+      });
+      const resultsWithMedia = await Promise.all(mediaPromises);
+
+      return res.status(200).json({
+        page: Number(req.query.page) || 1,
+        totalPages: Math.ceil(olResults.numFound / 20),
+        totalResults: olResults.numFound,
+        results: resultsWithMedia,
+      });
+    }
+
+    // Default: Movies/TV search (existing behavior — DO NOT MODIFY)
+    const searchProvider = findSearchProvider(queryString.toLowerCase());
+    let results: TmdbSearchMultiResponse;
+
     if (searchProvider) {
       const [id] = queryString
         .toLowerCase()

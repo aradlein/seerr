@@ -118,6 +118,104 @@ export class MediaRequest {
       throw new QuotaRestrictedError('Series Quota exceeded.');
     }
 
+    // Book request handling
+    if (requestBody.mediaType === MediaType.BOOK) {
+      if (
+        !requestUser.hasPermission(
+          [Permission.REQUEST, Permission.REQUEST_BOOK],
+          { type: 'or' }
+        )
+      ) {
+        throw new RequestPermissionError(
+          'You do not have permission to make book requests.'
+        );
+      }
+
+      if (quotas.book.restricted) {
+        throw new QuotaRestrictedError('Book Quota exceeded.');
+      }
+
+      if (!requestBody.openLibraryId) {
+        throw new Error('openLibraryId is required for book requests.');
+      }
+
+      let media = await mediaRepository.findOne({
+        where: {
+          openLibraryId: requestBody.openLibraryId,
+          mediaType: MediaType.BOOK,
+        },
+        relations: ['requests'],
+      });
+
+      if (!media) {
+        media = new Media({
+          tmdbId: 0, // Not used for books
+          openLibraryId: requestBody.openLibraryId,
+          status: MediaStatus.PENDING,
+          status4k: MediaStatus.UNKNOWN,
+          mediaType: MediaType.BOOK,
+        });
+      } else {
+        if (media.status === MediaStatus.BLOCKLISTED) {
+          throw new BlocklistedMediaError('This media is blocklisted.');
+        }
+        if (media.status === MediaStatus.UNKNOWN) {
+          media.status = MediaStatus.PENDING;
+        }
+      }
+
+      // Check for duplicate book requests
+      if (
+        media.requests?.some(
+          (r) =>
+            r.status !== MediaRequestStatus.DECLINED &&
+            r.status !== MediaRequestStatus.COMPLETED
+        )
+      ) {
+        throw new DuplicateMediaRequestError(
+          'Request for this media already exists.'
+        );
+      }
+
+      await mediaRepository.save(media);
+
+      const request = new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy: requestUser,
+        status: user.hasPermission(
+          [
+            Permission.AUTO_APPROVE,
+            Permission.AUTO_APPROVE_BOOK,
+            Permission.MANAGE_REQUESTS,
+          ],
+          { type: 'or' }
+        )
+          ? MediaRequestStatus.APPROVED
+          : MediaRequestStatus.PENDING,
+        modifiedBy: user.hasPermission(
+          [
+            Permission.AUTO_APPROVE,
+            Permission.AUTO_APPROVE_BOOK,
+            Permission.MANAGE_REQUESTS,
+          ],
+          { type: 'or' }
+        )
+          ? user
+          : undefined,
+        is4k: false,
+        serverId: requestBody.serverId,
+        profileId: requestBody.profileId,
+        rootFolder: requestBody.rootFolder,
+        tags: requestBody.tags,
+        isAutoRequest: options.isAutoRequest ?? false,
+        mediaFormat: requestBody.mediaFormat ?? null,
+      });
+
+      await requestRepository.save(request);
+      return request;
+    }
+
     const tmdbMedia =
       requestBody.mediaType === MediaType.MOVIE
         ? await tmdb.getMovie({ movieId: requestBody.mediaId })
@@ -725,7 +823,12 @@ export class MediaRequest {
     const tmdb = new TheMovieDb();
 
     try {
-      const mediaType = entity.type === MediaType.MOVIE ? 'Movie' : 'Series';
+      const mediaType =
+        entity.type === MediaType.MOVIE
+          ? 'Movie'
+          : entity.type === MediaType.BOOK
+            ? 'Book'
+            : 'Series';
       let event: string | undefined;
       let notifyAdmin = true;
       let notifySystem = true;
@@ -804,6 +907,26 @@ export class MediaRequest {
                 .join(', '),
             },
           ],
+        });
+      } else if (entity.type === MediaType.BOOK) {
+        // For books, use the media's openLibraryId to get basic info
+        // Full notification support will be added in Phase 5
+        notificationManager.sendNotification(type, {
+          media,
+          request: entity,
+          notifyAdmin,
+          notifySystem,
+          notifyUser: notifyAdmin ? undefined : entity.requestedBy,
+          event,
+          subject: `Book Request`,
+          message: `A book request has been ${
+            type === Notification.MEDIA_PENDING
+              ? 'created'
+              : type === Notification.MEDIA_APPROVED
+                ? 'approved'
+                : 'updated'
+          }.`,
+          image: '',
         });
       }
     } catch (e) {

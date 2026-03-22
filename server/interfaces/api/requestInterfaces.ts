@@ -26,4 +26,6 @@ export type MediaRequestBody = {
   languageProfileId?: number;
   userId?: number;
   tags?: number[];
+  openLibraryId?: string;
+  mediaFormat?: string; // 'ebook' | 'audiobook'
 };
