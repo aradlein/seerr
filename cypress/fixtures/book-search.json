@@ -1,0 +1,45 @@
+{
+  "numFound": 3,
+  "start": 0,
+  "docs": [
+    {
+      "key": "/works/OL45804W",
+      "title": "Dune",
+      "author_name": ["Frank Herbert"],
+      "author_key": ["OL34184A"],
+      "first_publish_year": 1965,
+      "cover_i": 8231856,
+      "edition_count": 203,
+      "isbn": ["9780441172719", "0441172717"],
+      "subject": ["Science fiction", "Fiction", "Imaginary wars and battles"],
+      "number_of_pages_median": 412,
+      "ratings_average": 4.2
+    },
+    {
+      "key": "/works/OL15158W",
+      "title": "Dune Messiah",
+      "author_name": ["Frank Herbert"],
+      "author_key": ["OL34184A"],
+      "first_publish_year": 1969,
+      "cover_i": 8231857,
+      "edition_count": 90,
+      "isbn": ["9780441172696"],
+      "subject": ["Science fiction"],
+      "number_of_pages_median": 256,
+      "ratings_average": 3.8
+    },
+    {
+      "key": "/works/OL15159W",
+      "title": "Children of Dune",
+      "author_name": ["Frank Herbert"],
+      "author_key": ["OL34184A"],
+      "first_publish_year": 1976,
+      "cover_i": 8231858,
+      "edition_count": 60,
+      "isbn": ["9780441104024"],
+      "subject": ["Science fiction"],
+      "number_of_pages_median": 408,
+      "ratings_average": 3.9
+    }
+  ]
+}

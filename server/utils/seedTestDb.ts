@@ -1,6 +1,9 @@
+import { MediaStatus, MediaType } from '@server/constants/media';
 import { UserType } from '@server/constants/user';
 import dataSource, { getRepository } from '@server/datasource';
+import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { Permission } from '@server/lib/permissions';
 import gravatarUrl from 'gravatar-url';
 
 export interface SeedDbOptions {
@@ -55,7 +58,7 @@ async function seedTestUsers(): Promise<void> {
   otherUser.email = 'friend@seerr.dev';
   otherUser.userType = UserType.PLEX;
   otherUser.password = TEST_USER_PASSWORD_HASH;
-  otherUser.permissions = 32;
+  otherUser.permissions = 32 | Permission.REQUEST_BOOK; // REQUEST + REQUEST_BOOK
   otherUser.avatar = gravatarUrl('friend@seerr.dev', {
     default: 'mm',
     size: 200,
@@ -83,6 +86,24 @@ export async function seedTestDb(options: SeedDbOptions = {}): Promise<void> {
   }
 
   await seedTestUsers();
+  await seedBookData();
+}
+
+/**
+ * Seeds book test data for E2E testing.
+ */
+async function seedBookData(): Promise<void> {
+  const mediaRepository = getRepository(Media);
+
+  // Create a test book media entity (Dune by Frank Herbert)
+  const bookMedia = new Media({
+    mediaType: MediaType.BOOK,
+    tmdbId: 0,
+    openLibraryId: 'OL45804W',
+    status: MediaStatus.UNKNOWN,
+    status4k: MediaStatus.UNKNOWN,
+  });
+  await mediaRepository.save(bookMedia);
 }
 
 /**

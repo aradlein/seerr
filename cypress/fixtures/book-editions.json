@@ -1,0 +1,29 @@
+{
+  "entries": [
+    {
+      "key": "/books/OL7353617M",
+      "title": "Dune",
+      "isbn_13": ["9780441172719"],
+      "isbn_10": ["0441172717"],
+      "publishers": ["Ace Books"],
+      "publish_date": "September 1990",
+      "number_of_pages": 535,
+      "physical_format": "Mass Market Paperback",
+      "covers": [8231856],
+      "works": [{ "key": "/works/OL45804W" }],
+      "languages": [{ "key": "/languages/eng" }]
+    },
+    {
+      "key": "/books/OL24936539M",
+      "title": "Dune",
+      "isbn_13": ["9780340960196"],
+      "publishers": ["Hodder & Stoughton"],
+      "publish_date": "2015",
+      "number_of_pages": 604,
+      "physical_format": "Hardcover",
+      "covers": [7894561],
+      "works": [{ "key": "/works/OL45804W" }],
+      "languages": [{ "key": "/languages/eng" }]
+    }
+  ]
+}

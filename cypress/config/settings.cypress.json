@@ -10,7 +10,8 @@
     "defaultPermissions": 32,
     "defaultQuotas": {
       "movie": {},
-      "tv": {}
+      "tv": {},
+      "book": {}
     },
     "hideAvailable": false,
     "localLogin": true,
@@ -55,6 +56,7 @@
   "tautulli": {},
   "radarr": [],
   "sonarr": [],
+  "bookshelf": [],
   "public": {
     "initialized": true
   },
@@ -178,6 +180,12 @@
     },
     "image-cache-cleanup": {
       "schedule": "0 0 5 * * *"
+    },
+    "plex-refresh-token": {
+      "schedule": "0 0 5 * * *"
+    },
+    "process-blocklisted-tags": {
+      "schedule": "0 30 1 */7 * *"
     }
   },
   "network": {

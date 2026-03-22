@@ -1,0 +1,17 @@
+{
+  "size": 50,
+  "entries": [
+    {
+      "key": "/works/OL45804W",
+      "title": "Dune",
+      "covers": [8231856],
+      "subjects": ["Science fiction"]
+    },
+    {
+      "key": "/works/OL15158W",
+      "title": "Dune Messiah",
+      "covers": [8231857],
+      "subjects": ["Science fiction"]
+    }
+  ]
+}
