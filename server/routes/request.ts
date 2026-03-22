@@ -1,3 +1,4 @@
+import BookshelfAPI from '@server/api/servarr/bookshelf';
 import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import {
@@ -218,6 +219,21 @@ requestRoutes.get<Record<string, unknown>, RequestResultsResponse>(
         })
       );
 
+      // get all quality profiles for every configured bookshelf server
+      const bookshelfServers = await Promise.all(
+        settings.bookshelf.map(async (bookshelfSetting) => {
+          const bookshelf = new BookshelfAPI({
+            apiKey: bookshelfSetting.apiKey,
+            url: BookshelfAPI.buildUrl(bookshelfSetting, '/api/v1'),
+          });
+
+          return {
+            id: bookshelfSetting.id,
+            profiles: await bookshelf.getProfiles().catch(() => undefined),
+          };
+        })
+      );
+
       // add profile names to the media requests, with undefined if not found
       let mappedRequests = requests.map((r) => {
         switch (r.type) {
@@ -235,6 +251,14 @@ requestRoutes.get<Record<string, unknown>, RequestResultsResponse>(
             return {
               ...r,
               profileName: sonarrServers
+                .find((serverr) => serverr.id === r.serverId)
+                ?.profiles?.find((profile) => profile.id === r.profileId)?.name,
+            };
+          }
+          case MediaType.BOOK: {
+            return {
+              ...r,
+              profileName: bookshelfServers
                 .find((serverr) => serverr.id === r.serverId)
                 ?.profiles?.find((profile) => profile.id === r.profileId)?.name,
             };
@@ -274,6 +298,15 @@ requestRoutes.get<Record<string, unknown>, RequestResultsResponse>(
                 ),
               };
             }
+            case MediaType.BOOK: {
+              return {
+                ...r,
+                // check if the bookshelf server for this request is configured
+                canRemove: bookshelfServers.some(
+                  (server) => server.id === r.media.serviceId
+                ),
+              };
+            }
             default: {
               return {
                 ...r,
@@ -308,6 +341,14 @@ requestRoutes.get<Record<string, unknown>, RequestResultsResponse>(
               name:
                 settings.sonarr.find((r) => r.id === s.id)?.name ||
                 `Sonarr ${s.id}`,
+            })),
+          bookshelf: bookshelfServers
+            .filter((s) => !s.profiles)
+            .map((s) => ({
+              id: s.id,
+              name:
+                settings.bookshelf.find((r) => r.id === s.id)?.name ||
+                `Bookshelf ${s.id}`,
             })),
         },
       });
