@@ -80,6 +80,24 @@ class Media {
     }
   }
 
+  public static async getMediaByOpenLibraryId(
+    openLibraryId: string
+  ): Promise<Media | undefined> {
+    const mediaRepository = getRepository(Media);
+
+    try {
+      const media = await mediaRepository.findOne({
+        where: { openLibraryId, mediaType: MediaType.BOOK },
+        relations: { requests: true, issues: true },
+      });
+
+      return media ?? undefined;
+    } catch (e) {
+      logger.error(e.message);
+      return undefined;
+    }
+  }
+
   @PrimaryGeneratedColumn()
   public id: number;
 
@@ -97,6 +115,10 @@ class Media {
   @Column({ nullable: true })
   @Index()
   public imdbId?: string;
+
+  @Column({ nullable: true, type: 'varchar' })
+  @Index()
+  public openLibraryId?: string | null;
 
   @Column({ type: 'int', default: MediaStatus.UNKNOWN })
   @Index()

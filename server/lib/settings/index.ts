@@ -102,6 +102,11 @@ export interface SonarrSettings extends DVRSettings {
   monitorNewItems: 'all' | 'none';
 }
 
+export interface BookshelfSettings extends DVRSettings {
+  // Uses same DVR settings as Radarr/Sonarr.
+  // No additional fields needed for v1.
+}
+
 interface Quota {
   quotaLimit?: number;
   quotaDays?: number;
@@ -137,6 +142,7 @@ export interface MainSettings {
   defaultQuotas: {
     movie: Quota;
     tv: Quota;
+    book: Quota;
   };
   hideAvailable: boolean;
   hideBlocklisted: boolean;
@@ -368,6 +374,7 @@ export interface AllSettings {
   tautulli: TautulliSettings;
   radarr: RadarrSettings[];
   sonarr: SonarrSettings[];
+  bookshelf: BookshelfSettings[];
   public: PublicSettings;
   notifications: NotificationSettings;
   jobs: Record<JobId, JobSettings>;
@@ -398,6 +405,7 @@ class Settings {
         defaultQuotas: {
           movie: {},
           tv: {},
+          book: {},
         },
         hideAvailable: false,
         hideBlocklisted: false,
@@ -441,6 +449,7 @@ class Settings {
       },
       radarr: [],
       sonarr: [],
+      bookshelf: [],
       public: {
         initialized: false,
       },
@@ -671,6 +680,14 @@ class Settings {
 
   set sonarr(data: SonarrSettings[]) {
     this.data.sonarr = data;
+  }
+
+  get bookshelf(): BookshelfSettings[] {
+    return this.data.bookshelf;
+  }
+
+  set bookshelf(data: BookshelfSettings[]) {
+    this.data.bookshelf = data;
   }
 
   get public(): PublicSettings {

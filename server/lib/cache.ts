@@ -4,13 +4,15 @@ export type AvailableCacheIds =
   | 'tmdb'
   | 'radarr'
   | 'sonarr'
+  | 'bookshelf'
   | 'rt'
   | 'imdb'
   | 'github'
   | 'plexguid'
   | 'plextv'
   | 'plexwatchlist'
-  | 'tvdb';
+  | 'tvdb'
+  | 'openlibrary';
 
 const DEFAULT_TTL = 300;
 const DEFAULT_CHECK_PERIOD = 120;
@@ -50,6 +52,7 @@ class CacheManager {
     }),
     radarr: new Cache('radarr', 'Radarr API'),
     sonarr: new Cache('sonarr', 'Sonarr API'),
+    bookshelf: new Cache('bookshelf', 'Bookshelf API'),
     rt: new Cache('rt', 'Rotten Tomatoes API', {
       stdTtl: 43200,
       checkPeriod: 60 * 30,
@@ -72,6 +75,10 @@ class CacheManager {
     }),
     plexwatchlist: new Cache('plexwatchlist', 'Plex Watchlist'),
     tvdb: new Cache('tvdb', 'The TVDB API', {
+      stdTtl: 21600,
+      checkPeriod: 60 * 30,
+    }),
+    openlibrary: new Cache('openlibrary', 'Open Library API', {
       stdTtl: 21600,
       checkPeriod: 60 * 30,
     }),

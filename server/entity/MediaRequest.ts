@@ -611,6 +611,9 @@ export class MediaRequest {
   @Column({ default: false })
   public isAutoRequest: boolean;
 
+  @Column({ nullable: true, type: 'varchar' })
+  public mediaFormat?: string | null;
+
   constructor(init?: Partial<MediaRequest>) {
     Object.assign(this, init);
   }
