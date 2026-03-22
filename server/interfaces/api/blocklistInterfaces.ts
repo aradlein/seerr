@@ -5,6 +5,7 @@ export interface BlocklistItem {
   tmdbId: number;
   mediaType: 'movie' | 'tv' | 'book';
   title?: string;
+  openLibraryId?: string | null;
   createdAt?: Date;
   user?: User;
   blocklistedTags?: string;

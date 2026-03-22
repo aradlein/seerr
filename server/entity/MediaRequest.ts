@@ -1,3 +1,4 @@
+import OpenLibraryAPI from '@server/api/openlibrary';
 import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
@@ -909,8 +910,65 @@ export class MediaRequest {
           ],
         });
       } else if (entity.type === MediaType.BOOK) {
-        // For books, use the media's openLibraryId to get basic info
-        // Full notification support will be added in Phase 5
+        const openLibrary = new OpenLibraryAPI();
+        const olid = media.openLibraryId;
+
+        let bookTitle = 'Unknown Book';
+        let bookDescription = '';
+        let bookImage = '';
+        const extra: { name: string; value: string }[] = [];
+
+        if (olid) {
+          try {
+            const work = await openLibrary.getWork(olid);
+            bookTitle = work.title;
+            bookDescription =
+              OpenLibraryAPI.normalizeDescription(work.description) ?? '';
+
+            // Use the first cover ID if available
+            if (work.covers && work.covers.length > 0) {
+              bookImage = OpenLibraryAPI.getCoverUrl(work.covers[0], 'L');
+            }
+
+            // Include author names if available
+            if (work.authors && work.authors.length > 0) {
+              const authorOlids = work.authors.map((a) =>
+                OpenLibraryAPI.extractOlid(a.author.key)
+              );
+              const authorNames: string[] = [];
+              for (const authorOlid of authorOlids) {
+                try {
+                  const author = await openLibrary.getAuthor(authorOlid);
+                  authorNames.push(author.name);
+                } catch {
+                  // Skip authors that fail to load
+                }
+              }
+              if (authorNames.length > 0) {
+                extra.push({
+                  name: 'Author',
+                  value: authorNames.join(', '),
+                });
+              }
+            }
+          } catch {
+            logger.warn(
+              'Failed to fetch Open Library work details for notification',
+              {
+                label: 'Notifications',
+                openLibraryId: olid,
+              }
+            );
+          }
+        }
+
+        if (entity.mediaFormat) {
+          extra.push({
+            name: 'Format',
+            value: entity.mediaFormat,
+          });
+        }
+
         notificationManager.sendNotification(type, {
           media,
           request: entity,
@@ -918,15 +976,14 @@ export class MediaRequest {
           notifySystem,
           notifyUser: notifyAdmin ? undefined : entity.requestedBy,
           event,
-          subject: `Book Request`,
-          message: `A book request has been ${
-            type === Notification.MEDIA_PENDING
-              ? 'created'
-              : type === Notification.MEDIA_APPROVED
-                ? 'approved'
-                : 'updated'
-          }.`,
-          image: '',
+          subject: bookTitle,
+          message: truncate(bookDescription, {
+            length: 500,
+            separator: /\s/,
+            omission: '…',
+          }),
+          image: bookImage,
+          extra: extra.length > 0 ? extra : undefined,
         });
       }
     } catch (e) {

@@ -6,4 +6,5 @@ export const watchlistCreate = z.object({
   tmdbId: z.coerce.number(),
   mediaType: z.nativeEnum(MediaType),
   title: z.coerce.string().optional(),
+  openLibraryId: z.string().optional(),
 });

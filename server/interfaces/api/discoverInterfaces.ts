@@ -10,6 +10,7 @@ export interface WatchlistItem {
   tmdbId: number;
   mediaType: 'movie' | 'tv' | 'book';
   title: string;
+  openLibraryId?: string | null;
 }
 
 export interface WatchlistResponse {

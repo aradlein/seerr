@@ -59,17 +59,27 @@ watchlistRoutes.delete('/:tmdbId', async (req, res, next) => {
   }
   try {
     const mediaType = req.query.mediaType;
-    if (mediaType !== MediaType.MOVIE && mediaType !== MediaType.TV) {
+    if (
+      mediaType !== MediaType.MOVIE &&
+      mediaType !== MediaType.TV &&
+      mediaType !== MediaType.BOOK
+    ) {
       return next({
         status: 400,
         message: 'Invalid mediaType query parameter.',
       });
     }
 
+    const openLibraryId =
+      mediaType === MediaType.BOOK
+        ? (req.query.openLibraryId as string)
+        : undefined;
+
     await Watchlist.deleteWatchlist(
       Number(req.params.tmdbId),
       mediaType,
-      req.user
+      req.user,
+      openLibraryId
     );
     return res.status(204).send();
   } catch (e) {

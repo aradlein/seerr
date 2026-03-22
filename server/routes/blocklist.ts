@@ -17,6 +17,7 @@ export const blocklistAdd = z.object({
   mediaType: z.nativeEnum(MediaType),
   title: z.coerce.string().optional(),
   user: z.coerce.number(),
+  openLibraryId: z.string().optional(),
 });
 
 const blocklistGet = z.object({
@@ -90,7 +91,11 @@ blocklistRoutes.get(
   }),
   async (req, res, next) => {
     const mediaType = req.query.mediaType;
-    if (mediaType !== MediaType.MOVIE && mediaType !== MediaType.TV) {
+    if (
+      mediaType !== MediaType.MOVIE &&
+      mediaType !== MediaType.TV &&
+      mediaType !== MediaType.BOOK
+    ) {
       return next({
         status: 400,
         message: 'Invalid or missing mediaType query parameter.',
@@ -98,14 +103,23 @@ blocklistRoutes.get(
     }
 
     try {
-      const blocklisteRepository = getRepository(Blocklist);
+      const blocklistRepository = getRepository(Blocklist);
 
-      const blocklistItem = await blocklisteRepository.findOneOrFail({
-        where: {
-          tmdbId: Number(req.params.id),
-          mediaType,
-        },
-      });
+      // For books, look up by openLibraryId (the :id param is the openLibraryId)
+      const blocklistItem =
+        mediaType === MediaType.BOOK
+          ? await blocklistRepository.findOneOrFail({
+              where: {
+                openLibraryId: req.params.id,
+                mediaType,
+              },
+            })
+          : await blocklistRepository.findOneOrFail({
+              where: {
+                tmdbId: Number(req.params.id),
+                mediaType,
+              },
+            });
 
       return res.status(200).send(blocklistItem);
     } catch (e) {
@@ -165,7 +179,11 @@ blocklistRoutes.delete(
   }),
   async (req, res, next) => {
     const mediaType = req.query.mediaType;
-    if (mediaType !== MediaType.MOVIE && mediaType !== MediaType.TV) {
+    if (
+      mediaType !== MediaType.MOVIE &&
+      mediaType !== MediaType.TV &&
+      mediaType !== MediaType.BOOK
+    ) {
       return next({
         status: 400,
         message: 'Invalid or missing mediaType query parameter.',
@@ -173,25 +191,43 @@ blocklistRoutes.delete(
     }
 
     try {
-      const blocklisteRepository = getRepository(Blocklist);
+      const blocklistRepository = getRepository(Blocklist);
 
-      const blocklistItem = await blocklisteRepository.findOneOrFail({
-        where: {
-          tmdbId: Number(req.params.id),
-          mediaType,
-        },
-      });
+      // For books, look up by openLibraryId; for movies/TV, by tmdbId
+      const blocklistItem =
+        mediaType === MediaType.BOOK
+          ? await blocklistRepository.findOneOrFail({
+              where: {
+                openLibraryId: req.params.id,
+                mediaType,
+              },
+            })
+          : await blocklistRepository.findOneOrFail({
+              where: {
+                tmdbId: Number(req.params.id),
+                mediaType,
+              },
+            });
 
-      await blocklisteRepository.remove(blocklistItem);
+      await blocklistRepository.remove(blocklistItem);
 
       const mediaRepository = getRepository(Media);
 
-      const mediaItem = await mediaRepository.findOneOrFail({
-        where: {
-          tmdbId: Number(req.params.id),
-          mediaType: req.query.mediaType as MediaType,
-        },
-      });
+      // For books, find media by openLibraryId; for movies/TV, by tmdbId
+      const mediaItem =
+        mediaType === MediaType.BOOK
+          ? await mediaRepository.findOneOrFail({
+              where: {
+                openLibraryId: req.params.id,
+                mediaType: MediaType.BOOK,
+              },
+            })
+          : await mediaRepository.findOneOrFail({
+              where: {
+                tmdbId: Number(req.params.id),
+                mediaType: mediaType as MediaType,
+              },
+            });
 
       await mediaRepository.remove(mediaItem);
 

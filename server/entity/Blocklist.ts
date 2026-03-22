@@ -1,4 +1,4 @@
-import { MediaStatus, type MediaType } from '@server/constants/media';
+import { MediaStatus, MediaType } from '@server/constants/media';
 import dataSource from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
@@ -33,6 +33,10 @@ export class Blocklist implements BlocklistItem {
   @Index()
   public tmdbId: number;
 
+  @Column({ nullable: true, type: 'varchar' })
+  @Index()
+  public openLibraryId?: string | null;
+
   @ManyToOne(() => User, (user) => user.id, {
     eager: true,
   })
@@ -63,23 +67,39 @@ export class Blocklist implements BlocklistItem {
         mediaType: MediaType;
         title?: ZodOptional<ZodString>['_output'];
         tmdbId: ZodNumber['_output'];
+        openLibraryId?: string;
         blocklistedTags?: string;
       };
     },
     entityManager?: EntityManager
   ): Promise<void> {
     const em = entityManager ?? dataSource;
+    const isBook = blocklistRequest.mediaType === MediaType.BOOK;
+
     const blocklist = new this({
       ...blocklistRequest,
+      openLibraryId: isBook ? blocklistRequest.openLibraryId : undefined,
     });
 
     const mediaRepository = em.getRepository(Media);
-    let media = await mediaRepository.findOne({
-      where: {
-        tmdbId: blocklistRequest.tmdbId,
-        mediaType: blocklistRequest.mediaType,
-      },
-    });
+
+    // For books, look up media by openLibraryId; for movies/TV, by tmdbId
+    let media: Media | null;
+    if (isBook && blocklistRequest.openLibraryId) {
+      media = await mediaRepository.findOne({
+        where: {
+          openLibraryId: blocklistRequest.openLibraryId,
+          mediaType: MediaType.BOOK,
+        },
+      });
+    } else {
+      media = await mediaRepository.findOne({
+        where: {
+          tmdbId: blocklistRequest.tmdbId,
+          mediaType: blocklistRequest.mediaType,
+        },
+      });
+    }
 
     const blocklistRepository = em.getRepository(this);
 
@@ -88,6 +108,7 @@ export class Blocklist implements BlocklistItem {
     if (!media) {
       media = new Media({
         tmdbId: blocklistRequest.tmdbId,
+        openLibraryId: isBook ? blocklistRequest.openLibraryId : undefined,
         status: MediaStatus.BLOCKLISTED,
         status4k: MediaStatus.BLOCKLISTED,
         mediaType: blocklistRequest.mediaType,

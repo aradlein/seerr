@@ -343,7 +343,7 @@ const TitleCard = ({
             alt=""
             src={
               mediaType === 'book'
-                ? image || `/images/seerr_poster_not_found_logo_top.png`
+                ? image || `/images/seerr_book_not_found.svg`
                 : image
                   ? `https://image.tmdb.org/t/p/w300_and_h450_face${image}`
                   : `/images/seerr_poster_not_found_logo_top.png`

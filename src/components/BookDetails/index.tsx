@@ -6,7 +6,6 @@ import Slider from '@app/components/Slider';
 import TitleCard from '@app/components/TitleCard';
 import ErrorPage from '@app/pages/_error';
 import defineMessages from '@app/utils/defineMessages';
-import { BookOpenIcon } from '@heroicons/react/24/outline';
 import type {
   BookDetails as BookDetailsType,
   BookResult,
@@ -87,22 +86,16 @@ const BookDetails = ({ book }: BookDetailsProps) => {
       <PageTitle title={data.title} />
       <div className="media-header">
         <div className="media-poster">
-          {data.coverUrl ? (
-            <CachedImage
-              type="openlibrary"
-              src={data.coverUrl}
-              alt={data.title}
-              sizes="100vw"
-              style={{ width: '100%', height: 'auto' }}
-              width={400}
-              height={600}
-              priority
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center rounded-lg bg-gray-800">
-              <BookOpenIcon className="h-16 w-16 text-gray-600" />
-            </div>
-          )}
+          <CachedImage
+            type="openlibrary"
+            src={data.coverUrl || '/images/seerr_book_not_found.svg'}
+            alt={data.title}
+            sizes="100vw"
+            style={{ width: '100%', height: 'auto' }}
+            width={400}
+            height={600}
+            priority
+          />
         </div>
         <div className="media-title">
           <h1 data-testid="media-title">

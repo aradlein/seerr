@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">
+  <rect width="300" height="450" fill="#1F2937" rx="8"/>
+  <g transform="translate(100, 150)">
+    <path d="M10 0C4.477 0 0 4.477 0 10v80c0 5.523 4.477 10 10 10h80c5.523 0 10-4.477 10-10V10c0-5.523-4.477-10-10-10H10zm5 15h70v70H15V15zm5 5v10h10V20H20zm0 15v10h10V35H20zm0 15v10h10V50H20zm15-30v10h40V20H35zm0 15v10h40V35H35zm0 15v10h40V50H35zm-15 15v10h60V65H20z" fill="#4B5563" opacity="0.5"/>
+  </g>
+  <text x="150" y="320" fill="#6B7280" font-family="sans-serif" font-size="16" text-anchor="middle">No Cover Available</text>
+</svg>

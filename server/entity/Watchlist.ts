@@ -1,3 +1,4 @@
+import OpenLibraryAPI from '@server/api/openlibrary';
 import TheMovieDb from '@server/api/themoviedb';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
@@ -43,6 +44,10 @@ export class Watchlist implements WatchlistItem {
   @Index()
   public tmdbId: number;
 
+  @Column({ nullable: true, type: 'varchar' })
+  @Index()
+  public openLibraryId?: string | null;
+
   @ManyToOne(() => User, (user) => user.watchlists, {
     eager: true,
     onDelete: 'CASCADE',
@@ -80,84 +85,166 @@ export class Watchlist implements WatchlistItem {
       ratingKey?: ZodOptional<ZodString>['_output'];
       title?: ZodOptional<ZodString>['_output'];
       tmdbId: ZodNumber['_output'];
+      openLibraryId?: string;
     };
     user: User;
   }): Promise<Watchlist> {
     const watchlistRepository = getRepository(this);
     const mediaRepository = getRepository(Media);
-    const tmdb = new TheMovieDb();
+    const isBook = watchlistRequest.mediaType === MediaType.BOOK;
 
-    const tmdbMedia =
-      watchlistRequest.mediaType === MediaType.MOVIE
-        ? await tmdb.getMovie({ movieId: watchlistRequest.tmdbId })
-        : await tmdb.getTvShow({ tvId: watchlistRequest.tmdbId });
+    // For books, check duplicates by openLibraryId; for movies/TV, by tmdbId
+    if (isBook && watchlistRequest.openLibraryId) {
+      const existing = await watchlistRepository
+        .createQueryBuilder('watchlist')
+        .leftJoinAndSelect('watchlist.requestedBy', 'user')
+        .where('user.id = :userId', { userId: user.id })
+        .andWhere('watchlist.openLibraryId = :openLibraryId', {
+          openLibraryId: watchlistRequest.openLibraryId,
+        })
+        .andWhere('watchlist.mediaType = :mediaType', {
+          mediaType: watchlistRequest.mediaType,
+        })
+        .getMany();
 
-    const existing = await watchlistRepository
-      .createQueryBuilder('watchlist')
-      .leftJoinAndSelect('watchlist.requestedBy', 'user')
-      .where('user.id = :userId', { userId: user.id })
-      .andWhere('watchlist.tmdbId = :tmdbId', {
-        tmdbId: watchlistRequest.tmdbId,
-      })
-      .andWhere('watchlist.mediaType = :mediaType', {
-        mediaType: watchlistRequest.mediaType,
-      })
-      .getMany();
+      if (existing && existing.length > 0) {
+        logger.warn('Duplicate request for watchlist blocked', {
+          openLibraryId: watchlistRequest.openLibraryId,
+          mediaType: watchlistRequest.mediaType,
+          label: 'Watchlist',
+        });
 
-    if (existing && existing.length > 0) {
-      logger.warn('Duplicate request for watchlist blocked', {
-        tmdbId: watchlistRequest.tmdbId,
-        mediaType: watchlistRequest.mediaType,
-        label: 'Watchlist',
+        throw new DuplicateWatchlistRequestError();
+      }
+
+      // Find or create media for the book
+      let media = await mediaRepository.findOne({
+        where: {
+          openLibraryId: watchlistRequest.openLibraryId,
+          mediaType: MediaType.BOOK,
+        },
       });
 
-      throw new DuplicateWatchlistRequestError();
-    }
+      if (!media) {
+        media = new Media({
+          tmdbId: 0,
+          openLibraryId: watchlistRequest.openLibraryId,
+          mediaType: MediaType.BOOK,
+        });
+      }
 
-    let media = await mediaRepository.findOne({
-      where: {
-        tmdbId: watchlistRequest.tmdbId,
-        mediaType: watchlistRequest.mediaType,
-      },
-    });
+      // Fetch title from Open Library if not provided
+      let title = watchlistRequest.title;
+      if (!title && watchlistRequest.openLibraryId) {
+        try {
+          const openLibrary = new OpenLibraryAPI();
+          const work = await openLibrary.getWork(
+            watchlistRequest.openLibraryId
+          );
+          title = work.title;
+        } catch {
+          title = 'Unknown Book';
+        }
+      }
 
-    if (!media) {
-      media = new Media({
-        tmdbId: tmdbMedia.id,
-        tvdbId: tmdbMedia.external_ids.tvdb_id,
-        mediaType: watchlistRequest.mediaType,
+      const watchlist = new this({
+        ...watchlistRequest,
+        title: title ?? '',
+        openLibraryId: watchlistRequest.openLibraryId,
+        requestedBy: user,
+        media,
       });
+
+      await mediaRepository.save(media);
+      await watchlistRepository.save(watchlist);
+      return watchlist;
+    } else {
+      // Movie/TV path
+      const tmdb = new TheMovieDb();
+      const tmdbMedia =
+        watchlistRequest.mediaType === MediaType.MOVIE
+          ? await tmdb.getMovie({ movieId: watchlistRequest.tmdbId })
+          : await tmdb.getTvShow({ tvId: watchlistRequest.tmdbId });
+
+      const existing = await watchlistRepository
+        .createQueryBuilder('watchlist')
+        .leftJoinAndSelect('watchlist.requestedBy', 'user')
+        .where('user.id = :userId', { userId: user.id })
+        .andWhere('watchlist.tmdbId = :tmdbId', {
+          tmdbId: watchlistRequest.tmdbId,
+        })
+        .andWhere('watchlist.mediaType = :mediaType', {
+          mediaType: watchlistRequest.mediaType,
+        })
+        .getMany();
+
+      if (existing && existing.length > 0) {
+        logger.warn('Duplicate request for watchlist blocked', {
+          tmdbId: watchlistRequest.tmdbId,
+          mediaType: watchlistRequest.mediaType,
+          label: 'Watchlist',
+        });
+
+        throw new DuplicateWatchlistRequestError();
+      }
+
+      let media = await mediaRepository.findOne({
+        where: {
+          tmdbId: watchlistRequest.tmdbId,
+          mediaType: watchlistRequest.mediaType,
+        },
+      });
+
+      if (!media) {
+        media = new Media({
+          tmdbId: tmdbMedia.id,
+          tvdbId: tmdbMedia.external_ids.tvdb_id,
+          mediaType: watchlistRequest.mediaType,
+        });
+      }
+
+      const watchlist = new this({
+        ...watchlistRequest,
+        requestedBy: user,
+        media,
+      });
+
+      await mediaRepository.save(media);
+      await watchlistRepository.save(watchlist);
+      return watchlist;
     }
-
-    const watchlist = new this({
-      ...watchlistRequest,
-      requestedBy: user,
-      media,
-    });
-
-    await mediaRepository.save(media);
-    await watchlistRepository.save(watchlist);
-    return watchlist;
   }
 
   public static async deleteWatchlist(
     tmdbId: Watchlist['tmdbId'],
     mediaType: MediaType,
-    user: User
+    user: User,
+    openLibraryId?: string
   ): Promise<Watchlist | null> {
     const watchlistRepository = getRepository(this);
-    const watchlist = await watchlistRepository.findOneBy({
-      tmdbId,
-      mediaType,
-      requestedBy: { id: user.id },
-    });
+
+    let watchlist: Watchlist | null;
+
+    // For books, look up by openLibraryId if provided
+    if (mediaType === MediaType.BOOK && openLibraryId) {
+      watchlist = await watchlistRepository.findOneBy({
+        openLibraryId,
+        mediaType,
+        requestedBy: { id: user.id },
+      });
+    } else {
+      watchlist = await watchlistRepository.findOneBy({
+        tmdbId,
+        mediaType,
+        requestedBy: { id: user.id },
+      });
+    }
+
     if (!watchlist) {
       throw new NotFoundError('not Found');
     }
 
-    if (watchlist) {
-      await watchlistRepository.delete(watchlist.id);
-    }
+    await watchlistRepository.delete(watchlist.id);
 
     return watchlist;
   }
