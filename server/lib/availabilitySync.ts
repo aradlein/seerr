@@ -2,6 +2,7 @@ import type { JellyfinLibraryItem } from '@server/api/jellyfin';
 import JellyfinAPI from '@server/api/jellyfin';
 import type { PlexMetadata } from '@server/api/plexapi';
 import PlexAPI from '@server/api/plexapi';
+import BookshelfAPI from '@server/api/servarr/bookshelf';
 import RadarrAPI, { type RadarrMovie } from '@server/api/servarr/radarr';
 import type { SonarrSeason, SonarrSeries } from '@server/api/servarr/sonarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
@@ -12,7 +13,11 @@ import Media from '@server/entity/Media';
 import MediaRequest from '@server/entity/MediaRequest';
 import type Season from '@server/entity/Season';
 import { User } from '@server/entity/User';
-import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
+import type {
+  BookshelfSettings,
+  RadarrSettings,
+  SonarrSettings,
+} from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { getHostname } from '@server/utils/getHostname';
@@ -28,6 +33,7 @@ class AvailabilitySync {
   private sonarrSeasonsCache: Record<string, SonarrSeason[]>;
   private radarrServers: RadarrSettings[];
   private sonarrServers: SonarrSettings[];
+  private bookshelfServers: BookshelfSettings[];
 
   async run() {
     const settings = getSettings();
@@ -38,6 +44,9 @@ class AvailabilitySync {
     this.sonarrSeasonsCache = {};
     this.radarrServers = settings.radarr.filter((server) => server.syncEnabled);
     this.sonarrServers = settings.sonarr.filter((server) => server.syncEnabled);
+    this.bookshelfServers = settings.bookshelf.filter(
+      (server) => server.syncEnabled
+    );
 
     try {
       logger.info(`Starting availability sync...`, {
@@ -397,6 +406,16 @@ class AvailabilitySync {
             );
           }
         }
+
+        // Books are checked against Bookshelf only (no media server check needed).
+        // Books are individual items like movies — no seasons/4K variants.
+        if (media.mediaType === 'book') {
+          const existsInBookshelf = await this.mediaExistsInBookshelf(media);
+
+          if (!existsInBookshelf && media.status === MediaStatus.AVAILABLE) {
+            await this.mediaUpdater(media, false, mediaServerType);
+          }
+        }
       }
     } catch (ex) {
       logger.error('Failed to complete availability sync.', {
@@ -677,6 +696,48 @@ class AvailabilitySync {
     }
 
     return existsInRadarr;
+  }
+
+  private async mediaExistsInBookshelf(media: Media): Promise<boolean> {
+    let existsInBookshelf = false;
+
+    // Check for availability in all of the available Bookshelf servers.
+    // Books don't have 4K variants, so we check all servers regardless.
+    for (const server of this.bookshelfServers) {
+      const bookshelfAPI = new BookshelfAPI({
+        apiKey: server.apiKey,
+        url: BookshelfAPI.buildUrl(server, '/api/v1'),
+      });
+
+      try {
+        let book;
+
+        if (media.externalServiceId) {
+          book = await bookshelfAPI.getBook({
+            id: media.externalServiceId,
+          });
+        }
+
+        if (book && book.bookFile) {
+          existsInBookshelf = true;
+        }
+      } catch (ex) {
+        if (!ex.message.includes('404')) {
+          existsInBookshelf = true;
+          logger.debug(
+            `Failure retrieving the book [OLID ${media.openLibraryId}] from Bookshelf.`,
+            {
+              errorMessage: ex.message,
+              label: 'Availability Sync',
+            }
+          );
+        }
+      }
+
+      if (existsInBookshelf) break;
+    }
+
+    return existsInBookshelf;
   }
 
   private async mediaExistsInSonarr(

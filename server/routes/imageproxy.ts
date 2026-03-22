@@ -29,6 +29,22 @@ function initTvdbImageProxy() {
   }
   return _tvdbImageProxy;
 }
+let _olImageProxy: ImageProxy;
+function initOlImageProxy() {
+  if (!_olImageProxy) {
+    _olImageProxy = new ImageProxy(
+      'openlibrary',
+      'https://covers.openlibrary.org',
+      {
+        rateLimitOptions: {
+          maxRequests: 20,
+          maxRPS: 20,
+        },
+      }
+    );
+  }
+  return _olImageProxy;
+}
 
 router.get('/:type/*', async (req, res) => {
   const imagePath = req.path.replace(/^\/\w+/, '');
@@ -44,6 +60,8 @@ router.get('/:type/*', async (req, res) => {
       imageData = await initTmdbImageProxy().getImage(imagePath);
     } else if (req.params.type === 'tvdb') {
       imageData = await initTvdbImageProxy().getImage(imagePath);
+    } else if (req.params.type === 'openlibrary') {
+      imageData = await initOlImageProxy().getImage(imagePath);
     } else {
       logger.error('Unsupported image type', {
         imagePath,
