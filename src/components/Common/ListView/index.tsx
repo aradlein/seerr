@@ -6,6 +6,7 @@ import useVerticalScroll from '@app/hooks/useVerticalScroll';
 import globalMessages from '@app/i18n/globalMessages';
 import { MediaStatus } from '@server/constants/media';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
+import type { BookResult } from '@server/models/Book';
 import type {
   CollectionResult,
   MovieResult,
@@ -15,7 +16,13 @@ import type {
 import { useIntl } from 'react-intl';
 
 type ListViewProps = {
-  items?: (TvResult | MovieResult | PersonResult | CollectionResult)[];
+  items?: (
+    | TvResult
+    | MovieResult
+    | PersonResult
+    | CollectionResult
+    | BookResult
+  )[];
   plexItems?: WatchlistItem[];
   isEmpty?: boolean;
   isLoading?: boolean;
@@ -129,6 +136,24 @@ const ListView = ({
                     summary={title.overview}
                     title={title.title}
                     mediaType={title.mediaType}
+                    canExpand
+                  />
+                );
+                break;
+              case 'book':
+                titleCard = (
+                  <TitleCard
+                    id={title.id}
+                    image={title.coverUrl}
+                    title={title.title}
+                    year={
+                      title.authors?.[0]?.name ??
+                      (title.firstPublishYear
+                        ? String(title.firstPublishYear)
+                        : undefined)
+                    }
+                    mediaType={title.mediaType}
+                    status={title.mediaInfo?.status}
                     canExpand
                   />
                 );

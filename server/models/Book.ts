@@ -5,6 +5,7 @@ import type {
   OLSearchResult,
   OLWorkDetails,
 } from '@server/api/openlibrary/interfaces';
+import type Media from '@server/entity/Media';
 
 export interface BookResult {
   id: string; // Open Library Work OLID (e.g., "OL45804W")
@@ -18,6 +19,7 @@ export interface BookResult {
   subjects?: string[];
   pageCount?: number;
   rating?: number;
+  mediaInfo?: Media;
 }
 
 export interface BookDetails {
