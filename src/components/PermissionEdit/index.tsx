@@ -78,6 +78,10 @@ export const messages = defineMessages('components.PermissionEdit', {
   viewwatchlists: 'View {mediaServerName} Watchlists',
   viewwatchlistsDescription:
     "Grant permission to view other users' {mediaServerName} Watchlists.",
+  requestBooks: 'Request Books',
+  requestBooksDescription: 'Grant permission to submit requests for books.',
+  autoapproveBooks: 'Auto-Approve Books',
+  autoapproveBooksDescription: 'Grant automatic approval for book requests.',
   manageblocklist: 'Manage Blocklist',
   manageblocklistDescription: 'Grant permission to manage blocklisted media.',
   blocklistedItems: 'Blocklist media.',
@@ -182,6 +186,12 @@ export const PermissionEdit = ({
           description: intl.formatMessage(messages.requestTvDescription),
           permission: Permission.REQUEST_TV,
         },
+        {
+          id: 'request-books',
+          name: intl.formatMessage(messages.requestBooks),
+          description: intl.formatMessage(messages.requestBooksDescription),
+          permission: Permission.REQUEST_BOOK,
+        },
       ],
     },
     {
@@ -215,6 +225,18 @@ export const PermissionEdit = ({
           requires: [
             {
               permissions: [Permission.REQUEST, Permission.REQUEST_TV],
+              type: 'or',
+            },
+          ],
+        },
+        {
+          id: 'autoapprovebooks',
+          name: intl.formatMessage(messages.autoapproveBooks),
+          description: intl.formatMessage(messages.autoapproveBooksDescription),
+          permission: Permission.AUTO_APPROVE_BOOK,
+          requires: [
+            {
+              permissions: [Permission.REQUEST, Permission.REQUEST_BOOK],
               type: 'or',
             },
           ],

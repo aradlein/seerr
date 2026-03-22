@@ -6,6 +6,7 @@ import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
+import BookshelfModal from '@app/components/Settings/BookshelfModal';
 import OverrideRuleModal from '@app/components/Settings/OverrideRule/OverrideRuleModal';
 import OverrideRuleTiles from '@app/components/Settings/OverrideRule/OverrideRuleTiles';
 import RadarrModal from '@app/components/Settings/RadarrModal';
@@ -13,10 +14,19 @@ import SonarrModal from '@app/components/Settings/SonarrModal';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition } from '@headlessui/react';
-import { PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/solid';
+import {
+  BookOpenIcon,
+  PencilIcon,
+  PlusIcon,
+  TrashIcon,
+} from '@heroicons/react/24/solid';
 import type OverrideRule from '@server/entity/OverrideRule';
 import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrideRuleInterfaces';
-import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
+import type {
+  BookshelfSettings,
+  RadarrSettings,
+  SonarrSettings,
+} from '@server/lib/settings';
 import axios from 'axios';
 import { Fragment, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -46,6 +56,13 @@ const messages = defineMessages('components.Settings', {
   mediaTypeMovie: 'movie',
   mediaTypeSeries: 'series',
   deleteServer: 'Delete {serverType} Server',
+  bookshelfsettings: 'Bookshelf Settings',
+  bookshelfSettingsDescription:
+    'Configure your Bookshelf server(s) below. You can connect multiple Bookshelf servers, but only one can be marked as default. Bookshelf is used to fulfill book requests.',
+  addbookshelf: 'Add Bookshelf Server',
+  mediaTypeBook: 'book',
+  noDefaultBookshelfServer:
+    'At least one Bookshelf server must be marked as default in order for book requests to be processed.',
   overrideRules: 'Override Rules',
   overrideRulesDescription:
     'Override rules allow you to specify properties that will be replaced if a request matches the rule.',
@@ -62,6 +79,7 @@ interface ServerInstanceProps {
   externalUrl?: string;
   profileName: string;
   isSonarr?: boolean;
+  isBookshelf?: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }
@@ -102,6 +120,7 @@ const ServerInstance = ({
   isDefault = false,
   isSSL = false,
   isSonarr = false,
+  isBookshelf = false,
   externalUrl,
   onEdit,
   onDelete,
@@ -170,7 +189,9 @@ const ServerInstance = ({
           rel="noopener noreferrer"
           className="opacity-50 hover:opacity-100"
         >
-          {isSonarr ? (
+          {isBookshelf ? (
+            <BookOpenIcon className="h-10 w-10 flex-shrink-0 text-indigo-400" />
+          ) : isSonarr ? (
             <SonarrLogo className="h-10 w-10 flex-shrink-0" />
           ) : (
             <RadarrLogo className="h-10 w-10 flex-shrink-0" />
@@ -215,6 +236,11 @@ const SettingsServices = () => {
     error: sonarrError,
     mutate: revalidateSonarr,
   } = useSWR<SonarrSettings[]>('/api/v1/settings/sonarr');
+  const {
+    data: bookshelfData,
+    error: bookshelfError,
+    mutate: revalidateBookshelf,
+  } = useSWR<BookshelfSettings[]>('/api/v1/settings/bookshelf');
   const { data: rules, mutate: revalidate } =
     useSWR<OverrideRuleResultsResponse>('/api/v1/overrideRule');
   const [editRadarrModal, setEditRadarrModal] = useState<{
@@ -231,9 +257,16 @@ const SettingsServices = () => {
     open: false,
     sonarr: null,
   });
+  const [editBookshelfModal, setEditBookshelfModal] = useState<{
+    open: boolean;
+    bookshelf: BookshelfSettings | null;
+  }>({
+    open: false,
+    bookshelf: null,
+  });
   const [deleteServerModal, setDeleteServerModal] = useState<{
     open: boolean;
-    type: 'radarr' | 'sonarr';
+    type: 'radarr' | 'sonarr' | 'bookshelf';
     serverId: number | null;
   }>({
     open: false,
@@ -255,6 +288,7 @@ const SettingsServices = () => {
     setDeleteServerModal({ open: false, serverId: null, type: 'radarr' });
     revalidateRadarr();
     revalidateSonarr();
+    revalidateBookshelf();
     mutate('/api/v1/settings/public');
   };
 
@@ -304,6 +338,19 @@ const SettingsServices = () => {
           }}
         />
       )}
+      {editBookshelfModal.open && (
+        <BookshelfModal
+          bookshelf={editBookshelfModal.bookshelf}
+          onClose={() =>
+            setEditBookshelfModal({ open: false, bookshelf: null })
+          }
+          onSave={() => {
+            revalidateBookshelf();
+            mutate('/api/v1/settings/public');
+            setEditBookshelfModal({ open: false, bookshelf: null });
+          }}
+        />
+      )}
       <Transition
         as={Fragment}
         show={deleteServerModal.open}
@@ -327,7 +374,11 @@ const SettingsServices = () => {
           }
           title={intl.formatMessage(messages.deleteServer, {
             serverType:
-              deleteServerModal.type === 'radarr' ? 'Radarr' : 'Sonarr',
+              deleteServerModal.type === 'radarr'
+                ? 'Radarr'
+                : deleteServerModal.type === 'bookshelf'
+                  ? 'Bookshelf'
+                  : 'Sonarr',
           })}
         >
           {intl.formatMessage(messages.deleteserverconfirm)}
@@ -492,6 +543,68 @@ const SettingsServices = () => {
                   >
                     <PlusIcon />
                     <span>{intl.formatMessage(messages.addsonarr)}</span>
+                  </Button>
+                </div>
+              </li>
+            </ul>
+          </>
+        )}
+      </div>
+      <div className="mb-6 mt-10">
+        <h3 className="heading">
+          {intl.formatMessage(messages.bookshelfsettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.bookshelfSettingsDescription)}
+        </p>
+      </div>
+      <div className="section">
+        {!bookshelfData && !bookshelfError && <LoadingSpinner />}
+        {bookshelfData && !bookshelfError && (
+          <>
+            {bookshelfData.length > 0 &&
+              !bookshelfData.some((bookshelf) => bookshelf.isDefault) && (
+                <Alert
+                  title={intl.formatMessage(messages.noDefaultBookshelfServer)}
+                />
+              )}
+            <ul className="grid max-w-6xl grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
+              {bookshelfData.map((bookshelf) => (
+                <ServerInstance
+                  key={`bookshelf-config-${bookshelf.id}`}
+                  name={bookshelf.name}
+                  hostname={bookshelf.hostname}
+                  port={bookshelf.port}
+                  profileName={bookshelf.activeProfileName}
+                  isSSL={bookshelf.useSsl}
+                  isDefault={bookshelf.isDefault}
+                  isBookshelf
+                  externalUrl={bookshelf.externalUrl}
+                  onEdit={() =>
+                    setEditBookshelfModal({ open: true, bookshelf })
+                  }
+                  onDelete={() =>
+                    setDeleteServerModal({
+                      open: true,
+                      serverId: bookshelf.id,
+                      type: 'bookshelf',
+                    })
+                  }
+                />
+              ))}
+              <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+                <div className="flex h-full w-full items-center justify-center">
+                  <Button
+                    buttonType="ghost"
+                    onClick={() =>
+                      setEditBookshelfModal({
+                        open: true,
+                        bookshelf: null,
+                      })
+                    }
+                  >
+                    <PlusIcon />
+                    <span>{intl.formatMessage(messages.addbookshelf)}</span>
                   </Button>
                 </div>
               </li>

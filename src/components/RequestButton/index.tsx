@@ -35,6 +35,7 @@ const messages = defineMessages('components.RequestButton', {
     'Approve {requestCount, plural, one {4K Request} other {{requestCount} 4K Requests}}',
   decline4krequests:
     'Decline {requestCount, plural, one {4K Request} other {{requestCount} 4K Requests}}',
+  requestbook: 'Request Book',
 });
 
 interface ButtonOption {
@@ -45,7 +46,7 @@ interface ButtonOption {
 }
 
 interface RequestButtonProps {
-  mediaType: 'movie' | 'tv';
+  mediaType: 'movie' | 'tv' | 'book';
   onUpdate: () => void;
   tmdbId: number;
   media?: Media;
@@ -146,7 +147,7 @@ const RequestButton = ({
     if (
       activeRequest &&
       hasPermission(Permission.MANAGE_REQUESTS) &&
-      mediaType === 'movie'
+      (mediaType === 'movie' || mediaType === 'book')
     ) {
       buttons.push(
         {
@@ -277,14 +278,19 @@ const RequestButton = ({
         Permission.REQUEST,
         mediaType === 'movie'
           ? Permission.REQUEST_MOVIE
-          : Permission.REQUEST_TV,
+          : mediaType === 'book'
+            ? Permission.REQUEST_BOOK
+            : Permission.REQUEST_TV,
       ],
       { type: 'or' }
     )
   ) {
     buttons.push({
       id: 'request',
-      text: intl.formatMessage(globalMessages.request),
+      text:
+        mediaType === 'book'
+          ? intl.formatMessage(messages.requestbook)
+          : intl.formatMessage(globalMessages.request),
       action: () => {
         setEditRequest(false);
         setShowRequestModal(true);
@@ -312,8 +318,9 @@ const RequestButton = ({
     });
   }
 
-  // 4K request button
+  // 4K request button (not applicable for books)
   if (
+    mediaType !== 'book' &&
     (!media ||
       media.status4k === MediaStatus.UNKNOWN ||
       (media.status4k === MediaStatus.DELETED && !active4kRequest)) &&
@@ -339,6 +346,7 @@ const RequestButton = ({
       svg: <ArrowDownTrayIcon />,
     });
   } else if (
+    mediaType !== 'book' &&
     mediaType === 'tv' &&
     (!active4kRequest || active4kRequest.requestedBy.id !== user?.id) &&
     hasPermission([Permission.REQUEST_4K, Permission.REQUEST_4K_TV], {

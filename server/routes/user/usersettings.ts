@@ -61,6 +61,10 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
         globalMovieQuotaLimit: defaultQuotas.movie.quotaLimit,
         globalTvQuotaDays: defaultQuotas.tv.quotaDays,
         globalTvQuotaLimit: defaultQuotas.tv.quotaLimit,
+        bookQuotaLimit: user.bookQuotaLimit,
+        bookQuotaDays: user.bookQuotaDays,
+        globalBookQuotaDays: defaultQuotas.book?.quotaDays,
+        globalBookQuotaLimit: defaultQuotas.book?.quotaLimit,
         watchlistSyncMovies: user.settings?.watchlistSyncMovies,
         watchlistSyncTv: user.settings?.watchlistSyncTv,
       });
@@ -117,6 +121,8 @@ userSettingsRoutes.post<
       user.movieQuotaLimit = req.body.movieQuotaLimit;
       user.tvQuotaDays = req.body.tvQuotaDays;
       user.tvQuotaLimit = req.body.tvQuotaLimit;
+      user.bookQuotaDays = req.body.bookQuotaDays;
+      user.bookQuotaLimit = req.body.bookQuotaLimit;
     }
 
     if (!user.settings) {
