@@ -33,6 +33,12 @@ export enum Permission {
   AUTO_APPROVE_BOOK = 2147483648,
 }
 
+// Future permissions (bit 0+) — stored in User.permissions2
+// The primary Permission enum above uses a 32-bit integer bitmask that is
+// fully allocated. Any new permissions (e.g., AUTO_REQUEST_BOOK,
+// REQUEST_4K_BOOK) should be added to a Permission2 enum and stored in
+// the User.permissions2 column. Use hasPermission2() for these when implemented.
+
 export interface PermissionCheckOptions {
   type: 'and' | 'or';
 }

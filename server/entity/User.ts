@@ -103,6 +103,15 @@ export class User {
   @Column({ type: 'integer', default: 0 })
   public permissions = 0;
 
+  /**
+   * Extended permissions column for future expansion.
+   * The primary `permissions` column uses a 32-bit integer bitmask and is
+   * fully allocated (bits 0-31). New permissions should be defined in this
+   * column starting from bit 0. Use hasPermission2() when implemented.
+   */
+  @Column({ type: 'integer', default: 0 })
+  public permissions2 = 0;
+
   @Column()
   public avatar: string;
 
@@ -404,9 +413,7 @@ export class User {
           ? Math.max(0, bookQuotaLimit - bookQuotaUsed)
           : undefined,
         restricted:
-          bookQuotaLimit && bookQuotaLimit - bookQuotaUsed <= 0
-            ? true
-            : false,
+          bookQuotaLimit && bookQuotaLimit - bookQuotaUsed <= 0 ? true : false,
       },
     };
   }
