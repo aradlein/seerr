@@ -8,8 +8,6 @@ import StatusBadge from '@app/components/StatusBadge';
 import TitleCard from '@app/components/TitleCard';
 import ErrorPage from '@app/pages/_error';
 import defineMessages from '@app/utils/defineMessages';
-import type { MediaStatus } from '@server/constants/media';
-import type { DownloadingItem } from '@server/lib/downloadtracker';
 import type {
   BookDetails as BookDetailsType,
   BookResult,
@@ -29,21 +27,13 @@ const messages = defineMessages('components.BookDetails', {
   by: 'by {authorList}',
 });
 
-// Extend BookDetailsType with mediaInfo until the shared interface is updated
-interface BookDetailsWithMedia extends BookDetailsType {
-  mediaInfo?: {
-    status: MediaStatus;
-    downloadStatus?: DownloadingItem[];
-  };
-}
-
 interface SimilarBooksResponse {
   totalResults: number;
   results: BookResult[];
 }
 
 interface BookDetailsProps {
-  book?: BookDetailsWithMedia;
+  book?: BookDetailsType;
 }
 
 const BookDetails = ({ book }: BookDetailsProps) => {
@@ -54,7 +44,7 @@ const BookDetails = ({ book }: BookDetailsProps) => {
     data,
     error,
     mutate: revalidate,
-  } = useSWR<BookDetailsWithMedia>(`/api/v1/book/${router.query.bookId}`, {
+  } = useSWR<BookDetailsType>(`/api/v1/book/${router.query.bookId}`, {
     fallbackData: book,
   });
 
