@@ -138,11 +138,21 @@ export async function fulfillBookRequest(request: MediaRequest): Promise<void> {
   });
 
   try {
-    // Step 1: Get ISBN from Open Library editions
+    // Step 1: Get ISBN and book metadata
+    // Use the pre-cached ISBN from media.imdbId (stored at request creation
+    // time) before falling back to an expensive Open Library API call.
     const olApi = new OpenLibraryAPI();
-    let isbn13: string | undefined;
+    let isbn13: string | undefined = media.imdbId ?? undefined;
     let bookTitle: string | undefined;
     let authorName: string | undefined;
+
+    if (isbn13) {
+      logger.info('Using pre-cached ISBN-13 from media entity', {
+        label: 'Book Fulfillment',
+        isbn13,
+        openLibraryId: media.openLibraryId,
+      });
+    }
 
     try {
       const work = await olApi.getWork(media.openLibraryId);
@@ -157,12 +167,14 @@ export async function fulfillBookRequest(request: MediaRequest): Promise<void> {
         authorName = author.name;
       }
 
-      // Get editions to find best ISBN-13
-      const editions = await olApi.getWorkEditions(media.openLibraryId);
-      for (const edition of editions.entries ?? []) {
-        if (edition.isbn_13?.[0]) {
-          isbn13 = edition.isbn_13[0];
-          break;
+      // If we don't have a pre-cached ISBN, look through editions
+      if (!isbn13) {
+        const editions = await olApi.getWorkEditions(media.openLibraryId);
+        for (const edition of editions.entries ?? []) {
+          if (edition.isbn_13?.[0]) {
+            isbn13 = edition.isbn_13[0];
+            break;
+          }
         }
       }
     } catch (e) {
@@ -174,29 +186,100 @@ export async function fulfillBookRequest(request: MediaRequest): Promise<void> {
     }
 
     // Step 2: Look up in Bookshelf (ISBN first, then title+author fallback)
+    // Note: Bookshelf's /book/lookup endpoint calls GoodReads in real-time
+    // and can be very slow (60-90+ seconds). The BookshelfAPI client uses
+    // a 120s timeout for these operations. If it still times out, we fall
+    // back to the faster /search endpoint.
     let matchedBook: BookshelfBook | undefined;
 
     if (isbn13) {
-      const results = await bookshelf.lookupBook(isbn13);
-      if (results.length > 0) {
-        matchedBook = results[0];
-        logger.info('Found book in Bookshelf by ISBN', {
-          label: 'Book Fulfillment',
-          isbn13,
-          bookshelfTitle: matchedBook.title,
-        });
+      try {
+        const results = await bookshelf.lookupBook(isbn13);
+        if (results.length > 0) {
+          matchedBook = results[0];
+          logger.info('Found book in Bookshelf by ISBN', {
+            label: 'Book Fulfillment',
+            isbn13,
+            bookshelfTitle: matchedBook.title,
+          });
+        }
+      } catch (lookupError) {
+        logger.warn(
+          'Bookshelf book/lookup timed out or failed for ISBN, will try title+author fallback',
+          {
+            label: 'Book Fulfillment',
+            isbn13,
+            errorMessage:
+              lookupError instanceof Error
+                ? lookupError.message
+                : String(lookupError),
+          }
+        );
       }
     }
 
     if (!matchedBook && bookTitle) {
       const searchTerm = authorName ? `${bookTitle} ${authorName}` : bookTitle;
-      const results = await bookshelf.lookupBook(searchTerm);
-      if (results.length > 0) {
-        matchedBook = results[0];
-        logger.info('Found book in Bookshelf by title+author search', {
+      try {
+        const results = await bookshelf.lookupBook(searchTerm);
+        if (results.length > 0) {
+          matchedBook = results[0];
+          logger.info('Found book in Bookshelf by title+author search', {
+            label: 'Book Fulfillment',
+            searchTerm,
+            bookshelfTitle: matchedBook.title,
+          });
+        }
+      } catch (lookupError) {
+        logger.warn(
+          'Bookshelf book/lookup timed out or failed for title+author, will try /search fallback',
+          {
+            label: 'Book Fulfillment',
+            searchTerm,
+            errorMessage:
+              lookupError instanceof Error
+                ? lookupError.message
+                : String(lookupError),
+          }
+        );
+      }
+    }
+
+    // Fallback: use the faster /search endpoint which searches Bookshelf's
+    // internal index rather than calling GoodReads in real-time
+    if (!matchedBook && bookTitle) {
+      try {
+        const searchResults = await bookshelf.searchAuthors(
+          authorName ?? bookTitle
+        );
+        if (searchResults.length > 0) {
+          // The /search endpoint returns author-level results.
+          // We need to find the matching book within the author's books.
+          for (const result of searchResults) {
+            const authorBooks = result.author?.books ?? [];
+            const match = authorBooks.find(
+              (b) =>
+                b.title?.toLowerCase() === bookTitle?.toLowerCase() ||
+                b.title?.toLowerCase().includes(bookTitle?.toLowerCase() ?? '')
+            );
+            if (match) {
+              matchedBook = match;
+              logger.info('Found book in Bookshelf via /search fallback', {
+                label: 'Book Fulfillment',
+                authorName: result.author?.authorName,
+                bookshelfTitle: matchedBook.title,
+              });
+              break;
+            }
+          }
+        }
+      } catch (searchError) {
+        logger.warn('Bookshelf /search fallback also failed', {
           label: 'Book Fulfillment',
-          searchTerm,
-          bookshelfTitle: matchedBook.title,
+          errorMessage:
+            searchError instanceof Error
+              ? searchError.message
+              : String(searchError),
         });
       }
     }

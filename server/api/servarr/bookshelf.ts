@@ -1,6 +1,11 @@
 import logger from '@server/logger';
 import ServarrBase from './base';
 
+// Bookshelf (Readarr) lookup endpoints call external metadata services
+// (GoodReads) in real-time, which can be very slow (60-90+ seconds).
+// We use a much longer timeout for these operations than the default.
+const LOOKUP_TIMEOUT_MS = 120000;
+
 export interface BookshelfBookOptions {
   title: string;
   qualityProfileId: number;
@@ -49,6 +54,16 @@ export interface BookshelfAuthor {
   path: string;
 }
 
+export interface BookshelfSearchResult {
+  foreignId: string;
+  author: {
+    authorName: string;
+    foreignAuthorId: string;
+    books?: BookshelfBook[];
+  };
+  id: number;
+}
+
 class BookshelfAPI extends ServarrBase<{ bookId: number }> {
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
     super({ url, apiKey, cacheName: 'bookshelf', apiName: 'Bookshelf' });
@@ -56,8 +71,14 @@ class BookshelfAPI extends ServarrBase<{ bookId: number }> {
 
   public lookupBook = async (term: string): Promise<BookshelfBook[]> => {
     try {
+      logger.info('Looking up book in Bookshelf (this may take a while)', {
+        label: 'Bookshelf API',
+        term,
+      });
+
       const response = await this.axios.get<BookshelfBook[]>('/book/lookup', {
         params: { term },
+        timeout: LOOKUP_TIMEOUT_MS,
       });
 
       return response.data;
@@ -276,10 +297,16 @@ class BookshelfAPI extends ServarrBase<{ bookId: number }> {
 
   public lookupAuthor = async (term: string): Promise<BookshelfAuthor[]> => {
     try {
+      logger.info('Looking up author in Bookshelf (this may take a while)', {
+        label: 'Bookshelf API',
+        term,
+      });
+
       const response = await this.axios.get<BookshelfAuthor[]>(
         '/author/lookup',
         {
           params: { term },
+          timeout: LOOKUP_TIMEOUT_MS,
         }
       );
 
@@ -291,6 +318,36 @@ class BookshelfAPI extends ServarrBase<{ bookId: number }> {
         term,
       });
       throw new Error(`[Bookshelf] Failed to lookup author: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  /**
+   * Uses the /search endpoint which is faster than /book/lookup because
+   * it uses Bookshelf's internal search rather than calling GoodReads
+   * for each result. Returns author-level results with books nested.
+   */
+  public searchAuthors = async (
+    term: string
+  ): Promise<BookshelfSearchResult[]> => {
+    try {
+      const response = await this.axios.get<BookshelfSearchResult[]>(
+        '/search',
+        {
+          params: { term },
+          timeout: LOOKUP_TIMEOUT_MS,
+        }
+      );
+
+      return response.data;
+    } catch (e) {
+      logger.error('Error searching in Bookshelf', {
+        label: 'Bookshelf API',
+        errorMessage: e.message,
+        term,
+      });
+      throw new Error(`[Bookshelf] Failed to search: ${e.message}`, {
         cause: e,
       });
     }
