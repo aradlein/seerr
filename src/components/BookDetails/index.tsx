@@ -136,6 +136,7 @@ const BookDetails = ({ book }: BookDetailsProps) => {
             <RequestButton
               mediaType="book"
               tmdbId={0}
+              openLibraryId={data.id}
               onUpdate={() => revalidate()}
             />
           </div>

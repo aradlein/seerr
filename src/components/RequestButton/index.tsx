@@ -52,6 +52,7 @@ interface RequestButtonProps {
   media?: Media;
   isShowComplete?: boolean;
   is4kShowComplete?: boolean;
+  openLibraryId?: string;
 }
 
 const RequestButton = ({
@@ -61,6 +62,7 @@ const RequestButton = ({
   mediaType,
   isShowComplete = false,
   is4kShowComplete = false,
+  openLibraryId,
 }: RequestButtonProps) => {
   const intl = useIntl();
   const settings = useSettings();
@@ -380,6 +382,7 @@ const RequestButton = ({
         tmdbId={tmdbId}
         show={showRequestModal}
         type={mediaType}
+        openLibraryId={openLibraryId}
         editRequest={editRequest ? activeRequest : undefined}
         onComplete={() => {
           onUpdate();
@@ -391,6 +394,7 @@ const RequestButton = ({
         tmdbId={tmdbId}
         show={showRequest4kModal}
         type={mediaType}
+        openLibraryId={openLibraryId}
         editRequest={editRequest ? active4kRequest : undefined}
         is4k
         onComplete={() => {
