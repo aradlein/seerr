@@ -2,7 +2,7 @@
 import type { Nullable } from '@app/utils/typeHelpers';
 import { useRouter } from 'next/router';
 import type { Dispatch, SetStateAction } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UrlObject } from 'url';
 import useDebouncedState from './useDebouncedState';
 
@@ -24,6 +24,11 @@ const useSearchInput = (): SearchObject => {
     (router.query.query as string) ?? ''
   );
 
+  // Track the last query we navigated to, so the route-sync effect
+  // can distinguish our own debounce-triggered navigations from
+  // external ones (back button, deep link, etc.)
+  const lastPushedQuery = useRef<string | null>(null);
+
   /**
    * This effect handles routing when the debounced search input
    * value changes.
@@ -33,6 +38,7 @@ const useSearchInput = (): SearchObject => {
    */
   useEffect(() => {
     if (debouncedValue !== '' && searchOpen) {
+      lastPushedQuery.current = debouncedValue;
       if (router.pathname.startsWith('/search')) {
         router.replace({
           pathname: router.pathname,
@@ -89,14 +95,17 @@ const useSearchInput = (): SearchObject => {
    * is on /search
    */
   useEffect(() => {
-    if (router.query.query !== debouncedValue) {
-      setSearchValue(
-        router.query.query
-          ? decodeURIComponent(router.query.query as string)
-          : ''
-      );
+    // If this route change was caused by our own debounce navigation,
+    // don't overwrite the search input — the user may still be typing.
+    const urlQuery = (router.query.query as string) ?? '';
+    const wasSelfNavigation = urlQuery === lastPushedQuery.current;
 
-      if (!router.pathname.startsWith('/search') && !router.query.query) {
+    if (wasSelfNavigation) {
+      lastPushedQuery.current = null;
+    } else if (urlQuery !== debouncedValue) {
+      setSearchValue(urlQuery ? decodeURIComponent(urlQuery) : '');
+
+      if (!router.pathname.startsWith('/search') && !urlQuery) {
         setIsOpen(false);
       }
     }
