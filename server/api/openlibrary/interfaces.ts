@@ -32,6 +32,7 @@ export interface OLWorkDetails {
 export interface OLEditionDetails {
   key: string;
   title: string;
+  description?: string | { value: string };
   isbn_10?: string[];
   isbn_13?: string[];
   publishers?: string[];

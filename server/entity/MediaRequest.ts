@@ -180,28 +180,8 @@ export class MediaRequest {
 
       await mediaRepository.save(media);
 
-      // Fetch ISBN-13 from Open Library editions for fulfillment bridge
-      try {
-        const openLibrary = new OpenLibraryAPI();
-        const editionsResponse = await openLibrary.getWorkEditions(
-          requestBody.openLibraryId
-        );
-        if (editionsResponse?.entries) {
-          for (const edition of editionsResponse.entries) {
-            if (edition.isbn_13 && edition.isbn_13.length > 0) {
-              media.imdbId = edition.isbn_13[0];
-              await mediaRepository.save(media);
-              break;
-            }
-          }
-        }
-      } catch (e) {
-        logger.warn('Failed to fetch ISBN for book request', {
-          label: 'Media Request',
-          openLibraryId: requestBody.openLibraryId,
-          errorMessage: e instanceof Error ? e.message : String(e),
-        });
-      }
+      // ISBN lookup is handled asynchronously during fulfillment in
+      // bookFulfillment.ts — no need to block the POST request here.
 
       const request = new MediaRequest({
         type: MediaType.BOOK,

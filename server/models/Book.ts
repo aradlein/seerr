@@ -32,6 +32,7 @@ export interface BookDetails {
   coverUrl?: string;
   subjects?: string[];
   links?: { url: string; title: string }[];
+  mediaInfo?: Media;
 }
 
 export interface BookEdition {
