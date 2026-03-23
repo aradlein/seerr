@@ -20,6 +20,7 @@ import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { RequestResultsResponse } from '@server/interfaces/api/requestInterfaces';
+import type { BookDetails } from '@server/models/Book';
 import type { MovieDetails } from '@server/models/Movie';
 import type { TvDetails } from '@server/models/Tv';
 import axios from 'axios';
@@ -48,8 +49,19 @@ const messages = defineMessages('components.RequestList.RequestItem', {
   profileName: 'Profile',
 });
 
-const isMovie = (movie: MovieDetails | TvDetails): movie is MovieDetails => {
-  return (movie as MovieDetails).title !== undefined;
+const isMovie = (
+  movie: MovieDetails | TvDetails | BookDetails
+): movie is MovieDetails => {
+  return (
+    (movie as MovieDetails).title !== undefined &&
+    (movie as BookDetails).mediaType !== 'book'
+  );
+};
+
+const isBook = (
+  movie: MovieDetails | TvDetails | BookDetails
+): movie is BookDetails => {
+  return (movie as BookDetails).mediaType === 'book';
 };
 
 interface RequestItemErrorProps {
@@ -87,7 +99,9 @@ const RequestItemError = ({
                 requestData?.type
                   ? requestData?.type === 'movie'
                     ? globalMessages.movie
-                    : globalMessages.tvshow
+                    : requestData?.type === 'book'
+                      ? globalMessages.book
+                      : globalMessages.tvshow
                   : globalMessages.request
               ),
             })}
@@ -304,8 +318,10 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
   const url =
     request.type === 'movie'
       ? `/api/v1/movie/${request.media.tmdbId}`
-      : `/api/v1/tv/${request.media.tmdbId}`;
-  const { data: title, error } = useSWR<MovieDetails | TvDetails>(
+      : request.type === 'book'
+        ? `/api/v1/book/${request.media.openLibraryId}`
+        : `/api/v1/tv/${request.media.tmdbId}`;
+  const { data: title, error } = useSWR<MovieDetails | TvDetails | BookDetails>(
     inView ? url : null
   );
   const { data: requestData, mutate: revalidate } = useSWR<
@@ -405,7 +421,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
         }}
       />
       <div className="relative flex w-full flex-col justify-between overflow-hidden rounded-xl bg-gray-800 py-2 text-gray-400 shadow-md ring-1 ring-gray-700 xl:h-28 xl:flex-row">
-        {title.backdropPath && (
+        {!isBook(title) && title.backdropPath && (
           <div className="absolute inset-0 z-0 w-full bg-cover bg-center xl:w-2/3">
             <CachedImage
               type="tmdb"
@@ -429,16 +445,20 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
               href={
                 requestData.type === 'movie'
                   ? `/movie/${requestData.media.tmdbId}`
-                  : `/tv/${requestData.media.tmdbId}`
+                  : requestData.type === 'book'
+                    ? `/book/${requestData.media.openLibraryId}`
+                    : `/tv/${requestData.media.tmdbId}`
               }
               className="relative h-auto w-12 flex-shrink-0 scale-100 transform-gpu overflow-hidden rounded-md transition duration-300 hover:scale-105"
             >
               <CachedImage
-                type="tmdb"
+                type={isBook(title) ? 'openlibrary' : 'tmdb'}
                 src={
-                  title.posterPath
-                    ? `https://image.tmdb.org/t/p/w600_and_h900_bestv2${title.posterPath}`
-                    : '/images/seerr_poster_not_found.png'
+                  isBook(title)
+                    ? (title.coverUrl ?? '/images/seerr_poster_not_found.png')
+                    : title.posterPath
+                      ? `https://image.tmdb.org/t/p/w600_and_h900_bestv2${title.posterPath}`
+                      : '/images/seerr_poster_not_found.png'
                 }
                 alt=""
                 sizes="100vw"
@@ -449,41 +469,51 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
             </Link>
             <div className="flex flex-col justify-center overflow-hidden pl-2 xl:pl-4">
               <div className="pt-0.5 text-xs font-medium text-white sm:pt-1">
-                {(isMovie(title)
-                  ? title.releaseDate
-                  : title.firstAirDate
+                {(isBook(title)
+                  ? title.firstPublishDate
+                  : isMovie(title)
+                    ? title.releaseDate
+                    : title.firstAirDate
                 )?.slice(0, 4)}
               </div>
               <Link
                 href={
                   requestData.type === 'movie'
                     ? `/movie/${requestData.media.tmdbId}`
-                    : `/tv/${requestData.media.tmdbId}`
+                    : requestData.type === 'book'
+                      ? `/book/${requestData.media.openLibraryId}`
+                      : `/tv/${requestData.media.tmdbId}`
                 }
                 className="mr-2 min-w-0 truncate text-lg font-bold text-white hover:underline xl:text-xl"
               >
-                {isMovie(title) ? title.title : title.name}
+                {isBook(title)
+                  ? title.title
+                  : isMovie(title)
+                    ? title.title
+                    : title.name}
               </Link>
-              {!isMovie(title) && request.seasons.length > 0 && (
-                <div className="card-field">
-                  <span className="card-field-name">
-                    {intl.formatMessage(messages.seasons, {
-                      seasonCount: request.seasons.length,
-                    })}
-                  </span>
-                  <div className="hide-scrollbar flex flex-nowrap overflow-x-scroll">
-                    {request.seasons.map((season) => (
-                      <span key={`season-${season.id}`} className="mr-2">
-                        <Badge>
-                          {season.seasonNumber === 0
-                            ? intl.formatMessage(globalMessages.specials)
-                            : season.seasonNumber}
-                        </Badge>
-                      </span>
-                    ))}
+              {!isMovie(title) &&
+                !isBook(title) &&
+                request.seasons.length > 0 && (
+                  <div className="card-field">
+                    <span className="card-field-name">
+                      {intl.formatMessage(messages.seasons, {
+                        seasonCount: request.seasons.length,
+                      })}
+                    </span>
+                    <div className="hide-scrollbar flex flex-nowrap overflow-x-scroll">
+                      {request.seasons.map((season) => (
+                        <span key={`season-${season.id}`} className="mr-2">
+                          <Badge>
+                            {season.seasonNumber === 0
+                              ? intl.formatMessage(globalMessages.specials)
+                              : season.seasonNumber}
+                          </Badge>
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
             </div>
           </div>
           <div className="z-10 ml-4 mt-4 flex w-full flex-col justify-center gap-1 overflow-hidden pr-4 text-sm sm:ml-2 sm:mt-0 xl:flex-1 xl:pr-0">
@@ -498,7 +528,11 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
               ) : requestData.status === MediaRequestStatus.FAILED ? (
                 <Badge
                   badgeType="danger"
-                  href={`/${requestData.type}/${requestData.media.tmdbId}?manage=1`}
+                  href={
+                    requestData.type === 'book'
+                      ? `/book/${requestData.media.openLibraryId}?manage=1`
+                      : `/${requestData.type}/${requestData.media.tmdbId}?manage=1`
+                  }
                 >
                   {intl.formatMessage(globalMessages.failed)}
                 </Badge>
@@ -507,7 +541,11 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                   MediaStatus.DELETED ? (
                 <Badge
                   badgeType="warning"
-                  href={`/${requestData.type}/${requestData.media.tmdbId}?manage=1`}
+                  href={
+                    requestData.type === 'book'
+                      ? `/book/${requestData.media.openLibraryId}?manage=1`
+                      : `/${requestData.type}/${requestData.media.tmdbId}?manage=1`
+                  }
                 >
                   {intl.formatMessage(globalMessages.pending)}
                 </Badge>
@@ -521,7 +559,13 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                       requestData.is4k ? 'downloadStatus4k' : 'downloadStatus'
                     ]
                   }
-                  title={isMovie(title) ? title.title : title.name}
+                  title={
+                    isBook(title)
+                      ? title.title
+                      : isMovie(title)
+                        ? title.title
+                        : title.name
+                  }
                   inProgress={
                     (
                       requestData.media[
@@ -699,7 +743,12 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                     <TrashIcon />
                     <span>
                       {intl.formatMessage(messages.removearr, {
-                        arr: request.type === 'movie' ? 'Radarr' : 'Sonarr',
+                        arr:
+                          request.type === 'movie'
+                            ? 'Radarr'
+                            : request.type === 'book'
+                              ? 'Bookshelf'
+                              : 'Sonarr',
                       })}
                     </span>
                   </ConfirmButton>
