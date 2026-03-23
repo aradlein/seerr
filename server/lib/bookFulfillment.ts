@@ -185,19 +185,62 @@ export async function fulfillBookRequest(request: MediaRequest): Promise<void> {
       });
     }
 
-    // Step 2: Look up in Bookshelf (ISBN first, then title+author fallback)
-    // Note: Bookshelf's /book/lookup endpoint calls GoodReads in real-time
-    // and can be very slow (60-90+ seconds). The BookshelfAPI client uses
-    // a 120s timeout for these operations. If it still times out, we fall
-    // back to the faster /search endpoint.
+    // Step 2: Look up in Bookshelf
+    // Try the fast internal /search endpoint first (uses Bookshelf's local
+    // index, responds in milliseconds). Only fall back to the slow /book/lookup
+    // endpoint (which calls GoodReads in real-time and can take 60-90+ seconds)
+    // if the internal search doesn't find a match.
     let matchedBook: BookshelfBook | undefined;
 
-    if (isbn13) {
+    // Fast path: Bookshelf internal search (no external API calls)
+    if (bookTitle) {
       try {
+        const searchResults = await bookshelf.searchAuthors(
+          authorName ?? bookTitle
+        );
+        if (searchResults.length > 0) {
+          const titleLower = bookTitle.toLowerCase();
+          for (const result of searchResults) {
+            const authorBooks = result.author?.books ?? [];
+            const match = authorBooks.find(
+              (b) =>
+                b.title?.toLowerCase() === titleLower ||
+                b.title?.toLowerCase().includes(titleLower)
+            );
+            if (match) {
+              matchedBook = match;
+              logger.info('Found book in Bookshelf via internal search', {
+                label: 'Book Fulfillment',
+                authorName: result.author?.authorName,
+                bookshelfTitle: matchedBook.title,
+              });
+              break;
+            }
+          }
+        }
+      } catch (searchError) {
+        logger.warn('Bookshelf internal search failed', {
+          label: 'Book Fulfillment',
+          errorMessage:
+            searchError instanceof Error
+              ? searchError.message
+              : String(searchError),
+        });
+      }
+    }
+
+    // Slow path: external lookup via /book/lookup (calls GoodReads)
+    // Only used if the book isn't already in Bookshelf's library
+    if (!matchedBook && isbn13) {
+      try {
+        logger.info(
+          'Book not found in Bookshelf internal search, trying external lookup by ISBN',
+          { label: 'Book Fulfillment', isbn13 }
+        );
         const results = await bookshelf.lookupBook(isbn13);
         if (results.length > 0) {
           matchedBook = results[0];
-          logger.info('Found book in Bookshelf by ISBN', {
+          logger.info('Found book in Bookshelf by ISBN lookup', {
             label: 'Book Fulfillment',
             isbn13,
             bookshelfTitle: matchedBook.title,
@@ -205,7 +248,7 @@ export async function fulfillBookRequest(request: MediaRequest): Promise<void> {
         }
       } catch (lookupError) {
         logger.warn(
-          'Bookshelf book/lookup timed out or failed for ISBN, will try title+author fallback',
+          'Bookshelf book/lookup timed out or failed for ISBN, will try title+author',
           {
             label: 'Book Fulfillment',
             isbn13,
@@ -221,10 +264,14 @@ export async function fulfillBookRequest(request: MediaRequest): Promise<void> {
     if (!matchedBook && bookTitle) {
       const searchTerm = authorName ? `${bookTitle} ${authorName}` : bookTitle;
       try {
+        logger.info('Trying external lookup by title+author', {
+          label: 'Book Fulfillment',
+          searchTerm,
+        });
         const results = await bookshelf.lookupBook(searchTerm);
         if (results.length > 0) {
           matchedBook = results[0];
-          logger.info('Found book in Bookshelf by title+author search', {
+          logger.info('Found book in Bookshelf by title+author lookup', {
             label: 'Book Fulfillment',
             searchTerm,
             bookshelfTitle: matchedBook.title,
@@ -232,7 +279,7 @@ export async function fulfillBookRequest(request: MediaRequest): Promise<void> {
         }
       } catch (lookupError) {
         logger.warn(
-          'Bookshelf book/lookup timed out or failed for title+author, will try /search fallback',
+          'Bookshelf book/lookup timed out or failed for title+author',
           {
             label: 'Book Fulfillment',
             searchTerm,
@@ -242,45 +289,6 @@ export async function fulfillBookRequest(request: MediaRequest): Promise<void> {
                 : String(lookupError),
           }
         );
-      }
-    }
-
-    // Fallback: use the faster /search endpoint which searches Bookshelf's
-    // internal index rather than calling GoodReads in real-time
-    if (!matchedBook && bookTitle) {
-      try {
-        const searchResults = await bookshelf.searchAuthors(
-          authorName ?? bookTitle
-        );
-        if (searchResults.length > 0) {
-          // The /search endpoint returns author-level results.
-          // We need to find the matching book within the author's books.
-          for (const result of searchResults) {
-            const authorBooks = result.author?.books ?? [];
-            const match = authorBooks.find(
-              (b) =>
-                b.title?.toLowerCase() === bookTitle?.toLowerCase() ||
-                b.title?.toLowerCase().includes(bookTitle?.toLowerCase() ?? '')
-            );
-            if (match) {
-              matchedBook = match;
-              logger.info('Found book in Bookshelf via /search fallback', {
-                label: 'Book Fulfillment',
-                authorName: result.author?.authorName,
-                bookshelfTitle: matchedBook.title,
-              });
-              break;
-            }
-          }
-        }
-      } catch (searchError) {
-        logger.warn('Bookshelf /search fallback also failed', {
-          label: 'Book Fulfillment',
-          errorMessage:
-            searchError instanceof Error
-              ? searchError.message
-              : String(searchError),
-        });
       }
     }
 
