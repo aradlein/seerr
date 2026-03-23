@@ -33,6 +33,26 @@ bookRoutes.get('/:id', async (req, res, next) => {
 
     const bookDetails = mapWorkToBookDetails(work, authorDetails);
 
+    // If work has no cover, try to find one via edition ISBN
+    if (!bookDetails.coverUrl) {
+      try {
+        const editionsResponse = await openLibrary.getWorkEditions(
+          req.params.id
+        );
+        const editions = editionsResponse.entries ?? [];
+        // Find first edition with an ISBN
+        for (const edition of editions) {
+          const isbn = edition.isbn_13?.[0] ?? edition.isbn_10?.[0];
+          if (isbn) {
+            bookDetails.coverUrl = OpenLibraryAPI.getCoverUrlByISBN(isbn, 'L');
+            break;
+          }
+        }
+      } catch {
+        // ISBN cover fallback is best-effort; continue without it
+      }
+    }
+
     // Check if a Media entity exists for this book
     const media = await Media.getMediaByOpenLibraryId(req.params.id);
 

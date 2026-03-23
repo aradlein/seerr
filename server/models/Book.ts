@@ -88,7 +88,9 @@ export const mapSearchResultToBookResult = (
     firstPublishYear: result.first_publish_year,
     coverUrl: result.cover_i
       ? OpenLibraryAPI.getCoverUrl(result.cover_i, 'M')
-      : undefined,
+      : result.isbn?.[0]
+        ? OpenLibraryAPI.getCoverUrlByISBN(result.isbn[0], 'M')
+        : undefined,
     editionCount: result.edition_count,
     isbn: result.isbn?.slice(0, 5), // Limit ISBNs to avoid huge payloads
     subjects: result.subject?.slice(0, 10),
