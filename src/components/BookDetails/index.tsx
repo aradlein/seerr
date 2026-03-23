@@ -4,9 +4,12 @@ import PageTitle from '@app/components/Common/PageTitle';
 import Tag from '@app/components/Common/Tag';
 import RequestButton from '@app/components/RequestButton';
 import Slider from '@app/components/Slider';
+import StatusBadge from '@app/components/StatusBadge';
 import TitleCard from '@app/components/TitleCard';
 import ErrorPage from '@app/pages/_error';
 import defineMessages from '@app/utils/defineMessages';
+import type { MediaStatus } from '@server/constants/media';
+import type { DownloadingItem } from '@server/lib/downloadtracker';
 import type {
   BookDetails as BookDetailsType,
   BookResult,
@@ -26,13 +29,21 @@ const messages = defineMessages('components.BookDetails', {
   by: 'by {authorList}',
 });
 
+// Extend BookDetailsType with mediaInfo until the shared interface is updated
+interface BookDetailsWithMedia extends BookDetailsType {
+  mediaInfo?: {
+    status: MediaStatus;
+    downloadStatus?: DownloadingItem[];
+  };
+}
+
 interface SimilarBooksResponse {
   totalResults: number;
   results: BookResult[];
 }
 
 interface BookDetailsProps {
-  book?: BookDetailsType;
+  book?: BookDetailsWithMedia;
 }
 
 const BookDetails = ({ book }: BookDetailsProps) => {
@@ -43,7 +54,7 @@ const BookDetails = ({ book }: BookDetailsProps) => {
     data,
     error,
     mutate: revalidate,
-  } = useSWR<BookDetailsType>(`/api/v1/book/${router.query.bookId}`, {
+  } = useSWR<BookDetailsWithMedia>(`/api/v1/book/${router.query.bookId}`, {
     fallbackData: book,
   });
 
@@ -100,6 +111,15 @@ const BookDetails = ({ book }: BookDetailsProps) => {
           />
         </div>
         <div className="media-title">
+          <div className="media-status">
+            <StatusBadge
+              status={data.mediaInfo?.status}
+              downloadItem={data.mediaInfo?.downloadStatus ?? []}
+              title={data.title}
+              inProgress={(data.mediaInfo?.downloadStatus ?? []).length > 0}
+              mediaType="book"
+            />
+          </div>
           <h1 data-testid="media-title">
             {data.title}{' '}
             {data.firstPublishDate && (

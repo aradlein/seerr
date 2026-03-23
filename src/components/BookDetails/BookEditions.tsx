@@ -45,7 +45,16 @@ const BookEditions = () => {
   }
 
   if (!data || data.results.length === 0) {
-    return null;
+    return (
+      <div className="mt-6">
+        <h2 className="text-xl font-bold text-white">
+          {intl.formatMessage(messages.editions)}
+        </h2>
+        <p className="mt-4 text-sm text-gray-400">
+          {intl.formatMessage(messages.noeditions)}
+        </p>
+      </div>
+    );
   }
 
   return (
