@@ -1,5 +1,6 @@
+import OpenLibraryAPI from '@server/api/openlibrary';
 import assert from 'node:assert/strict';
-import { beforeEach, describe, it } from 'node:test';
+import { beforeEach, describe, it, mock } from 'node:test';
 
 import {
   MediaRequestStatus,
@@ -362,6 +363,104 @@ describe('Book request handling', () => {
       assert.strictEqual(request.profileId, 2);
       assert.strictEqual(request.rootFolder, '/books');
       assert.deepStrictEqual(request.tags, [1, 2, 3]);
+    });
+  });
+
+  describe('No synchronous Open Library calls (Fix #55)', () => {
+    it('should not call getWorkEditions during book request creation', async () => {
+      // Before the fix, MediaRequest.request() called openLibrary.getWorkEditions()
+      // synchronously to look up ISBNs, which blocked the POST response.
+      // After the fix, ISBN lookup is deferred to the async fulfillment step.
+      //
+      // We verify by mocking the ExternalAPI.get method and checking that
+      // NO call to a /editions.json endpoint was made during request creation.
+      // Note: The @AfterInsert notification hook may call other OL endpoints
+      // (getWork, getAuthor) for notification content, which is expected and
+      // does not block the response.
+      const getMock = mock.method(
+        Object.getPrototypeOf(Object.getPrototypeOf(new OpenLibraryAPI())),
+        'get'
+      );
+
+      const request = await MediaRequest.request(
+        {
+          mediaType: MediaType.BOOK,
+          mediaId: 0,
+          openLibraryId: 'OL_NOAPI_TEST',
+        },
+        regularUser
+      );
+
+      assert.ok(request);
+      assert.strictEqual(request.type, MediaType.BOOK);
+
+      // The critical assertion: no calls to getWorkEditions were made.
+      // Before Fix #55, the handler called getWorkEditions synchronously
+      // to look up ISBNs, which blocked the POST response.
+      const editionsCalls = getMock.mock.calls.filter(
+        (call: { arguments: unknown[] }) => {
+          const endpoint = call.arguments[0] as string;
+          return endpoint.includes('/editions.json');
+        }
+      );
+
+      assert.strictEqual(
+        editionsCalls.length,
+        0,
+        'getWorkEditions should NOT be called during book request creation'
+      );
+
+      getMock.mock.restore();
+    });
+
+    it('should return the request immediately without fetching editions', async () => {
+      // A complementary test: verify that the request is created with the
+      // expected properties and no edition lookups happen inline.
+      const getMock = mock.method(
+        Object.getPrototypeOf(Object.getPrototypeOf(new OpenLibraryAPI())),
+        'get'
+      );
+
+      const request = await MediaRequest.request(
+        {
+          mediaType: MediaType.BOOK,
+          mediaId: 0,
+          openLibraryId: 'OL_IMMEDIATE_TEST',
+        },
+        regularUser
+      );
+
+      // Verify the request was created with correct data
+      assert.ok(request);
+      assert.strictEqual(request.type, MediaType.BOOK);
+      assert.strictEqual(request.is4k, false);
+
+      // Verify the associated Media entity was created
+      const mediaRepo = getRepository(Media);
+      const media = await mediaRepo.findOne({
+        where: {
+          openLibraryId: 'OL_IMMEDIATE_TEST',
+          mediaType: MediaType.BOOK,
+        },
+      });
+      assert.ok(media, 'Media entity should exist');
+      assert.strictEqual(media.openLibraryId, 'OL_IMMEDIATE_TEST');
+
+      // No edition lookup calls should have been made
+      const editionsCalls = getMock.mock.calls.filter(
+        (call: { arguments: unknown[] }) => {
+          const endpoint = call.arguments[0] as string;
+          return endpoint.includes('/editions.json');
+        }
+      );
+
+      assert.strictEqual(
+        editionsCalls.length,
+        0,
+        'No getWorkEditions calls should be made during request creation'
+      );
+
+      getMock.mock.restore();
     });
   });
 });

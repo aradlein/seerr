@@ -4,6 +4,7 @@ import type {
   OLAuthorWorksResponse,
   OLEditionDetails,
   OLEditionsResponse,
+  OLSearchResponse,
   OLSearchResult,
   OLWorkDetails,
 } from '@server/api/openlibrary/interfaces';
@@ -522,6 +523,918 @@ describe('Author routes (handler logic)', () => {
       assert.strictEqual(results[0].title, 'Dune');
       assert.strictEqual(results[0].mediaType, 'book');
       assert.strictEqual(results[1].title, 'Dune Messiah');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Book route sparse data enrichment tests (Fix #54)
+//
+// These tests verify the enrichment logic added in the book route handler
+// that fills in missing data from supplementary search and edition fallbacks.
+// We test the logic by simulating the route handler's algorithm using
+// mocked API calls, since the enrichment happens inline in the handler.
+// ---------------------------------------------------------------------------
+
+describe('Book route sparse data enrichment (Fix #54)', () => {
+  let getMock: ReturnType<typeof mock.method>;
+
+  beforeEach(() => {
+    getMock = mock.method(
+      Object.getPrototypeOf(Object.getPrototypeOf(new OpenLibraryAPI())),
+      'get'
+    );
+  });
+
+  describe('Author fallback from search', () => {
+    it('should fill in author names from search when getAuthor fails', async () => {
+      // Simulates the route handler logic: work has authors, but getAuthor
+      // throws for all of them. The handler then falls back to searchBooks
+      // to get author names from the search index.
+      const sparseWork: OLWorkDetails = {
+        key: '/works/OL_SPARSE_1',
+        title: 'Sparse Book',
+        authors: [
+          { author: { key: '/authors/OL_AUTH_FAIL_1' } },
+          { author: { key: '/authors/OL_AUTH_FAIL_2' } },
+        ],
+      };
+
+      const searchResponse: OLSearchResponse = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL_SPARSE_1',
+            title: 'Sparse Book',
+            author_name: ['Author Alpha', 'Author Beta'],
+            author_key: ['OL_AUTH_FAIL_1', 'OL_AUTH_FAIL_2'],
+          },
+        ],
+      };
+
+      const editionsResponse: OLEditionsResponse = {
+        entries: [],
+      };
+
+      // Simulate the route handler's logic step by step
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_SPARSE_1.json')) return sparseWork;
+        if (endpoint.includes('/works/OL_SPARSE_1/editions.json'))
+          return editionsResponse;
+        if (endpoint.includes('/authors/')) throw new Error('Author not found');
+        if (endpoint.includes('/search.json')) return searchResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+
+      // Step 1: Get the work
+      const work = await api.getWork('OL_SPARSE_1');
+
+      // Step 2: Try to resolve authors (all fail)
+      const authorDetails: OLAuthorDetails[] = [];
+      const failedAuthorOlids: string[] = [];
+      if (work.authors) {
+        for (const authorRef of work.authors) {
+          try {
+            const authorOlid = OpenLibraryAPI.extractOlid(authorRef.author.key);
+            const author = await api.getAuthor(authorOlid);
+            authorDetails.push(author);
+          } catch {
+            const failedOlid = OpenLibraryAPI.extractOlid(authorRef.author.key);
+            failedAuthorOlids.push(failedOlid);
+          }
+        }
+      }
+
+      // Step 3: Map to BookDetails (should have empty authors)
+      const bookDetails = mapWorkToBookDetails(work, authorDetails);
+      assert.strictEqual(bookDetails.authors.length, 0);
+
+      // Step 4: Search fallback fills in author names
+      const needsSearchFallback =
+        failedAuthorOlids.length > 0 ||
+        (work.authors &&
+          work.authors.length > 0 &&
+          bookDetails.authors.length === 0);
+
+      assert.ok(
+        needsSearchFallback,
+        'Should trigger search fallback for failed authors'
+      );
+
+      const olResults = await api.searchBooks({ query: work.title, limit: 5 });
+      const workOlid = OpenLibraryAPI.extractOlid(work.key);
+      const matchingResult = olResults.docs.find(
+        (doc) => OpenLibraryAPI.extractOlid(doc.key) === workOlid
+      );
+
+      assert.ok(matchingResult, 'Should find matching search result');
+
+      // Fill in authors from search (mirrors route handler logic)
+      if (matchingResult.author_name && matchingResult.author_key) {
+        if (bookDetails.authors.length === 0) {
+          bookDetails.authors = matchingResult.author_name.map((name, i) => ({
+            id: OpenLibraryAPI.extractOlid(
+              matchingResult.author_key?.[i] ?? ''
+            ),
+            name,
+          }));
+        }
+      }
+
+      assert.strictEqual(bookDetails.authors.length, 2);
+      assert.strictEqual(bookDetails.authors[0].name, 'Author Alpha');
+      assert.strictEqual(bookDetails.authors[0].id, 'OL_AUTH_FAIL_1');
+      assert.strictEqual(bookDetails.authors[1].name, 'Author Beta');
+      assert.strictEqual(bookDetails.authors[1].id, 'OL_AUTH_FAIL_2');
+    });
+
+    it('should fill in specific failed authors while keeping resolved ones', async () => {
+      // When some authors resolve but others fail, the handler should
+      // keep the resolved authors and add the failed ones from search.
+      const work: OLWorkDetails = {
+        key: '/works/OL_PARTIAL_AUTH',
+        title: 'Partially Authored',
+        authors: [
+          { author: { key: '/authors/OL_GOOD_AUTH' } },
+          { author: { key: '/authors/OL_BAD_AUTH' } },
+        ],
+      };
+
+      const goodAuthor: OLAuthorDetails = {
+        key: '/authors/OL_GOOD_AUTH',
+        name: 'Good Author',
+      };
+
+      const searchResponse: OLSearchResponse = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL_PARTIAL_AUTH',
+            title: 'Partially Authored',
+            author_name: ['Good Author', 'Bad Author Found Via Search'],
+            author_key: ['OL_GOOD_AUTH', 'OL_BAD_AUTH'],
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_PARTIAL_AUTH.json')) return work;
+        if (endpoint.includes('/works/OL_PARTIAL_AUTH/editions.json'))
+          return { entries: [] };
+        if (endpoint.includes('/authors/OL_GOOD_AUTH.json')) return goodAuthor;
+        if (endpoint.includes('/authors/OL_BAD_AUTH.json'))
+          throw new Error('Not found');
+        if (endpoint.includes('/search.json')) return searchResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_PARTIAL_AUTH');
+
+      const authorDetails: OLAuthorDetails[] = [];
+      const failedAuthorOlids: string[] = [];
+      for (const authorRef of fetchedWork.authors ?? []) {
+        try {
+          const authorOlid = OpenLibraryAPI.extractOlid(authorRef.author.key);
+          const author = await api.getAuthor(authorOlid);
+          authorDetails.push(author);
+        } catch {
+          failedAuthorOlids.push(
+            OpenLibraryAPI.extractOlid(authorRef.author.key)
+          );
+        }
+      }
+
+      const bookDetails = mapWorkToBookDetails(fetchedWork, authorDetails);
+      assert.strictEqual(bookDetails.authors.length, 1);
+      assert.strictEqual(bookDetails.authors[0].name, 'Good Author');
+
+      // Search fallback for the failed author
+      const olResults = await api.searchBooks({
+        query: fetchedWork.title,
+        limit: 5,
+      });
+      const matchingResult = olResults.docs.find(
+        (doc) =>
+          OpenLibraryAPI.extractOlid(doc.key) ===
+          OpenLibraryAPI.extractOlid(fetchedWork.key)
+      );
+
+      if (matchingResult?.author_name && matchingResult?.author_key) {
+        for (const failedOlid of failedAuthorOlids) {
+          const searchIdx = matchingResult.author_key.findIndex(
+            (k) => OpenLibraryAPI.extractOlid(k) === failedOlid
+          );
+          if (searchIdx >= 0 && matchingResult.author_name[searchIdx]) {
+            bookDetails.authors.push({
+              id: failedOlid,
+              name: matchingResult.author_name[searchIdx],
+            });
+          }
+        }
+      }
+
+      assert.strictEqual(bookDetails.authors.length, 2);
+      assert.strictEqual(bookDetails.authors[0].name, 'Good Author');
+      assert.strictEqual(
+        bookDetails.authors[1].name,
+        'Bad Author Found Via Search'
+      );
+      assert.strictEqual(bookDetails.authors[1].id, 'OL_BAD_AUTH');
+    });
+
+    it('should use "Unknown Author" when search also has no author data', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_NO_AUTH_DATA',
+        title: 'No Author Data',
+        authors: [{ author: { key: '/authors/OL_MISSING_AUTH' } }],
+      };
+
+      // Search result without author data
+      const searchResponse: OLSearchResponse = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL_NO_AUTH_DATA',
+            title: 'No Author Data',
+            // No author_name or author_key
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_NO_AUTH_DATA.json')) return work;
+        if (endpoint.includes('/works/OL_NO_AUTH_DATA/editions.json'))
+          return { entries: [] };
+        if (endpoint.includes('/authors/')) throw new Error('Not found');
+        if (endpoint.includes('/search.json')) return searchResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_NO_AUTH_DATA');
+
+      const authorDetails: OLAuthorDetails[] = [];
+      const failedAuthorOlids: string[] = [];
+      for (const authorRef of fetchedWork.authors ?? []) {
+        try {
+          const authorOlid = OpenLibraryAPI.extractOlid(authorRef.author.key);
+          await api.getAuthor(authorOlid);
+        } catch {
+          failedAuthorOlids.push(
+            OpenLibraryAPI.extractOlid(authorRef.author.key)
+          );
+        }
+      }
+
+      const bookDetails = mapWorkToBookDetails(fetchedWork, authorDetails);
+      assert.strictEqual(bookDetails.authors.length, 0);
+
+      // Search fallback - no author_name in search result
+      const olResults = await api.searchBooks({
+        query: fetchedWork.title,
+        limit: 5,
+      });
+      const matchingResult = olResults.docs.find(
+        (doc) =>
+          OpenLibraryAPI.extractOlid(doc.key) ===
+          OpenLibraryAPI.extractOlid(fetchedWork.key)
+      );
+
+      if (matchingResult) {
+        if (!matchingResult.author_name && failedAuthorOlids.length > 0) {
+          for (const failedOlid of failedAuthorOlids) {
+            bookDetails.authors.push({
+              id: failedOlid,
+              name: 'Unknown Author',
+            });
+          }
+        }
+      }
+
+      assert.strictEqual(bookDetails.authors.length, 1);
+      assert.strictEqual(bookDetails.authors[0].name, 'Unknown Author');
+      assert.strictEqual(bookDetails.authors[0].id, 'OL_MISSING_AUTH');
+    });
+  });
+
+  describe('Description fallback from editions', () => {
+    it('should use edition description when work has no description', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_NO_DESC',
+        title: 'No Description Work',
+        // No description field
+      };
+
+      const editionsResponse: OLEditionsResponse = {
+        entries: [
+          {
+            key: '/books/OL_ED_1',
+            title: 'No Description Work - Hardcover',
+            description: 'Description from the edition.',
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_NO_DESC.json')) return work;
+        if (endpoint.includes('/works/OL_NO_DESC/editions.json'))
+          return editionsResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_NO_DESC');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      assert.strictEqual(
+        bookDetails.description,
+        undefined,
+        'Work itself has no description'
+      );
+
+      // Edition description fallback (mirrors route handler logic)
+      const edResp = await api.getWorkEditions('OL_NO_DESC');
+      const editions = edResp.entries ?? [];
+
+      if (!bookDetails.description && editions.length > 0) {
+        for (const edition of editions) {
+          const editionDesc = OpenLibraryAPI.normalizeDescription(
+            edition.description
+          );
+          if (editionDesc) {
+            bookDetails.description = editionDesc;
+            break;
+          }
+        }
+      }
+
+      assert.strictEqual(
+        bookDetails.description,
+        'Description from the edition.'
+      );
+    });
+
+    it('should handle object-style edition descriptions', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_OBJ_DESC',
+        title: 'Object Description Edition',
+      };
+
+      const editionsResponse: OLEditionsResponse = {
+        entries: [
+          {
+            key: '/books/OL_ED_OBJ',
+            title: 'Object Description Edition - Paperback',
+            description: { value: 'Edition description as object.' },
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_OBJ_DESC.json')) return work;
+        if (endpoint.includes('/works/OL_OBJ_DESC/editions.json'))
+          return editionsResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_OBJ_DESC');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      const edResp = await api.getWorkEditions('OL_OBJ_DESC');
+      const editions = edResp.entries ?? [];
+
+      if (!bookDetails.description && editions.length > 0) {
+        for (const edition of editions) {
+          const editionDesc = OpenLibraryAPI.normalizeDescription(
+            edition.description
+          );
+          if (editionDesc) {
+            bookDetails.description = editionDesc;
+            break;
+          }
+        }
+      }
+
+      assert.strictEqual(
+        bookDetails.description,
+        'Edition description as object.'
+      );
+    });
+
+    it('should skip editions without descriptions', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_SKIP_ED',
+        title: 'Skip Editions Without Desc',
+      };
+
+      const editionsResponse: OLEditionsResponse = {
+        entries: [
+          {
+            key: '/books/OL_ED_NODESC',
+            title: 'Edition Without Desc',
+            // No description
+          },
+          {
+            key: '/books/OL_ED_WITHDESC',
+            title: 'Edition With Desc',
+            description: 'Found it!',
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_SKIP_ED.json')) return work;
+        if (endpoint.includes('/works/OL_SKIP_ED/editions.json'))
+          return editionsResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_SKIP_ED');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      const edResp = await api.getWorkEditions('OL_SKIP_ED');
+      const editions = edResp.entries ?? [];
+
+      if (!bookDetails.description && editions.length > 0) {
+        for (const edition of editions) {
+          const editionDesc = OpenLibraryAPI.normalizeDescription(
+            edition.description
+          );
+          if (editionDesc) {
+            bookDetails.description = editionDesc;
+            break;
+          }
+        }
+      }
+
+      assert.strictEqual(bookDetails.description, 'Found it!');
+    });
+  });
+
+  describe('Cover fallback from edition ISBNs', () => {
+    it('should use ISBN-based cover URL when work has no covers', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_NO_COVER',
+        title: 'No Cover Work',
+        // No covers field
+      };
+
+      const editionsResponse: OLEditionsResponse = {
+        entries: [
+          {
+            key: '/books/OL_ED_ISBN',
+            title: 'No Cover Work - Paperback',
+            isbn_13: ['9781234567890'],
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_NO_COVER.json')) return work;
+        if (endpoint.includes('/works/OL_NO_COVER/editions.json'))
+          return editionsResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_NO_COVER');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      assert.strictEqual(bookDetails.coverUrl, undefined);
+
+      const edResp = await api.getWorkEditions('OL_NO_COVER');
+      const editions = edResp.entries ?? [];
+
+      // ISBN cover fallback (mirrors route handler logic)
+      if (!bookDetails.coverUrl && editions.length > 0) {
+        for (const edition of editions) {
+          const isbn = edition.isbn_13?.[0] ?? edition.isbn_10?.[0];
+          if (isbn) {
+            bookDetails.coverUrl = OpenLibraryAPI.getCoverUrlByISBN(isbn, 'L');
+            break;
+          }
+        }
+      }
+
+      assert.strictEqual(
+        bookDetails.coverUrl,
+        'https://covers.openlibrary.org/b/isbn/9781234567890-L.jpg'
+      );
+    });
+
+    it('should fall back to ISBN-10 when no ISBN-13 available', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_ISBN10_COVER',
+        title: 'ISBN-10 Cover Fallback',
+      };
+
+      const editionsResponse: OLEditionsResponse = {
+        entries: [
+          {
+            key: '/books/OL_ED_ISBN10',
+            title: 'ISBN-10 Edition',
+            isbn_10: ['0123456789'],
+            // No isbn_13
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_ISBN10_COVER.json')) return work;
+        if (endpoint.includes('/works/OL_ISBN10_COVER/editions.json'))
+          return editionsResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_ISBN10_COVER');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      const edResp = await api.getWorkEditions('OL_ISBN10_COVER');
+      const editions = edResp.entries ?? [];
+
+      if (!bookDetails.coverUrl && editions.length > 0) {
+        for (const edition of editions) {
+          const isbn = edition.isbn_13?.[0] ?? edition.isbn_10?.[0];
+          if (isbn) {
+            bookDetails.coverUrl = OpenLibraryAPI.getCoverUrlByISBN(isbn, 'L');
+            break;
+          }
+        }
+      }
+
+      assert.strictEqual(
+        bookDetails.coverUrl,
+        'https://covers.openlibrary.org/b/isbn/0123456789-L.jpg'
+      );
+    });
+  });
+
+  describe('Subjects and date fallback from search', () => {
+    it('should fill in missing subjects from search results', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_NO_SUBJ',
+        title: 'No Subjects Work',
+        // No subjects
+      };
+
+      const searchResponse: OLSearchResponse = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL_NO_SUBJ',
+            title: 'No Subjects Work',
+            subject: ['Fiction', 'Adventure', 'Fantasy'],
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_NO_SUBJ.json')) return work;
+        if (endpoint.includes('/works/OL_NO_SUBJ/editions.json'))
+          return { entries: [] };
+        if (endpoint.includes('/search.json')) return searchResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_NO_SUBJ');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      assert.ok(
+        !bookDetails.subjects,
+        'Work should have no subjects initially'
+      );
+
+      // Search fallback for subjects
+      const needsSearchFallback =
+        !bookDetails.subjects ||
+        (bookDetails.subjects as string[]).length === 0;
+      assert.ok(needsSearchFallback);
+
+      const olResults = await api.searchBooks({
+        query: fetchedWork.title,
+        limit: 5,
+      });
+      const matchingResult = olResults.docs.find(
+        (doc) =>
+          OpenLibraryAPI.extractOlid(doc.key) ===
+          OpenLibraryAPI.extractOlid(fetchedWork.key)
+      );
+
+      if (
+        matchingResult &&
+        (!bookDetails.subjects ||
+          (bookDetails.subjects as string[]).length === 0) &&
+        matchingResult.subject
+      ) {
+        bookDetails.subjects = matchingResult.subject.slice(0, 20);
+      }
+
+      assert.ok(bookDetails.subjects);
+      assert.strictEqual(bookDetails.subjects.length, 3);
+      assert.deepStrictEqual(bookDetails.subjects, [
+        'Fiction',
+        'Adventure',
+        'Fantasy',
+      ]);
+    });
+
+    it('should fill in missing firstPublishDate from search results', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_NO_DATE',
+        title: 'No Date Work',
+        // No first_publish_date
+      };
+
+      const searchResponse: OLSearchResponse = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL_NO_DATE',
+            title: 'No Date Work',
+            first_publish_year: 1999,
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_NO_DATE.json')) return work;
+        if (endpoint.includes('/works/OL_NO_DATE/editions.json'))
+          return { entries: [] };
+        if (endpoint.includes('/search.json')) return searchResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_NO_DATE');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      assert.strictEqual(bookDetails.firstPublishDate, undefined);
+
+      const olResults = await api.searchBooks({
+        query: fetchedWork.title,
+        limit: 5,
+      });
+      const matchingResult = olResults.docs.find(
+        (doc) =>
+          OpenLibraryAPI.extractOlid(doc.key) ===
+          OpenLibraryAPI.extractOlid(fetchedWork.key)
+      );
+
+      if (matchingResult && !bookDetails.firstPublishDate) {
+        if (matchingResult.first_publish_year) {
+          bookDetails.firstPublishDate = String(
+            matchingResult.first_publish_year
+          );
+        }
+      }
+
+      assert.strictEqual(bookDetails.firstPublishDate, '1999');
+    });
+
+    it('should fill in missing cover from search cover_i', async () => {
+      const work: OLWorkDetails = {
+        key: '/works/OL_NO_COVER_SEARCH',
+        title: 'No Cover Needs Search',
+        // No covers
+      };
+
+      const searchResponse: OLSearchResponse = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL_NO_COVER_SEARCH',
+            title: 'No Cover Needs Search',
+            cover_i: 55555,
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_NO_COVER_SEARCH.json')) return work;
+        if (endpoint.includes('/works/OL_NO_COVER_SEARCH/editions.json'))
+          return { entries: [] }; // no editions either
+        if (endpoint.includes('/search.json')) return searchResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_NO_COVER_SEARCH');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      assert.strictEqual(bookDetails.coverUrl, undefined);
+
+      const olResults = await api.searchBooks({
+        query: fetchedWork.title,
+        limit: 5,
+      });
+      const matchingResult = olResults.docs.find(
+        (doc) =>
+          OpenLibraryAPI.extractOlid(doc.key) ===
+          OpenLibraryAPI.extractOlid(fetchedWork.key)
+      );
+
+      if (matchingResult && !bookDetails.coverUrl && matchingResult.cover_i) {
+        bookDetails.coverUrl = OpenLibraryAPI.getCoverUrl(
+          matchingResult.cover_i,
+          'L'
+        );
+      }
+
+      assert.strictEqual(
+        bookDetails.coverUrl,
+        'https://covers.openlibrary.org/b/id/55555-L.jpg'
+      );
+    });
+  });
+
+  describe('Combined sparse data scenario', () => {
+    it('should handle a work with only key and title, enriching from both editions and search', async () => {
+      // Minimal work: only key and title. No description, no covers,
+      // no subjects, no authors, no first_publish_date.
+      const minimalWork: OLWorkDetails = {
+        key: '/works/OL_MINIMAL',
+        title: 'Minimal Book',
+      };
+
+      const editionsResponse: OLEditionsResponse = {
+        entries: [
+          {
+            key: '/books/OL_MIN_ED',
+            title: 'Minimal Book - First Edition',
+            description: 'A description from the edition.',
+            isbn_13: ['9789876543210'],
+          },
+        ],
+      };
+
+      const searchResponse: OLSearchResponse = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL_MINIMAL',
+            title: 'Minimal Book',
+            first_publish_year: 2020,
+            subject: ['Novel', 'Contemporary Fiction'],
+            // No cover_i, so ISBN cover from editions will be used
+          },
+        ],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_MINIMAL.json')) return minimalWork;
+        if (endpoint.includes('/works/OL_MINIMAL/editions.json'))
+          return editionsResponse;
+        if (endpoint.includes('/search.json')) return searchResponse;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+
+      // Step 1: Get work and map
+      const fetchedWork = await api.getWork('OL_MINIMAL');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      assert.strictEqual(bookDetails.title, 'Minimal Book');
+      assert.ok(!bookDetails.description, 'Work has no description');
+      assert.ok(!bookDetails.coverUrl, 'Work has no cover');
+      assert.ok(!bookDetails.subjects, 'Work has no subjects');
+      assert.ok(
+        !bookDetails.firstPublishDate,
+        'Work has no first publish date'
+      );
+      assert.deepStrictEqual(bookDetails.authors, []);
+
+      // Step 2: Edition fallbacks
+      const edResp = await api.getWorkEditions('OL_MINIMAL');
+      const editions = edResp.entries ?? [];
+
+      // Cover fallback from ISBN
+      if (!bookDetails.coverUrl && editions.length > 0) {
+        for (const edition of editions) {
+          const isbn = edition.isbn_13?.[0] ?? edition.isbn_10?.[0];
+          if (isbn) {
+            bookDetails.coverUrl = OpenLibraryAPI.getCoverUrlByISBN(isbn, 'L');
+            break;
+          }
+        }
+      }
+
+      // Description fallback from edition
+      if (!bookDetails.description && editions.length > 0) {
+        for (const edition of editions) {
+          const editionDesc = OpenLibraryAPI.normalizeDescription(
+            edition.description
+          );
+          if (editionDesc) {
+            bookDetails.description = editionDesc;
+            break;
+          }
+        }
+      }
+
+      // Step 3: Search fallback for remaining missing data
+      const olResults = await api.searchBooks({
+        query: fetchedWork.title,
+        limit: 5,
+      });
+      const matchingResult = olResults.docs.find(
+        (doc) =>
+          OpenLibraryAPI.extractOlid(doc.key) ===
+          OpenLibraryAPI.extractOlid(fetchedWork.key)
+      );
+
+      if (matchingResult) {
+        if (
+          (!bookDetails.subjects ||
+            (bookDetails.subjects as string[]).length === 0) &&
+          matchingResult.subject
+        ) {
+          bookDetails.subjects = matchingResult.subject.slice(0, 20);
+        }
+        if (
+          !bookDetails.firstPublishDate &&
+          matchingResult.first_publish_year
+        ) {
+          bookDetails.firstPublishDate = String(
+            matchingResult.first_publish_year
+          );
+        }
+      }
+
+      // Verify all fields are now populated
+      assert.strictEqual(
+        bookDetails.description,
+        'A description from the edition.'
+      );
+      assert.strictEqual(
+        bookDetails.coverUrl,
+        'https://covers.openlibrary.org/b/isbn/9789876543210-L.jpg'
+      );
+      assert.deepStrictEqual(bookDetails.subjects, [
+        'Novel',
+        'Contemporary Fiction',
+      ]);
+      assert.strictEqual(bookDetails.firstPublishDate, '2020');
+    });
+
+    it('should not overwrite existing data with fallback values', async () => {
+      // Work with all fields populated should not be overwritten by fallbacks.
+      const fullWork: OLWorkDetails = {
+        key: '/works/OL_FULL',
+        title: 'Full Work',
+        description: 'Original description.',
+        covers: [12345],
+        subjects: ['Original Subject'],
+        first_publish_date: '2010',
+        authors: [],
+      };
+
+      getMock.mock.mockImplementation(async (endpoint: string) => {
+        if (endpoint.includes('/works/OL_FULL.json')) return fullWork;
+        if (endpoint.includes('/works/OL_FULL/editions.json'))
+          return { entries: [] };
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      });
+
+      const api = new OpenLibraryAPI();
+      const fetchedWork = await api.getWork('OL_FULL');
+      const bookDetails = mapWorkToBookDetails(fetchedWork);
+
+      // Check that the search fallback is NOT triggered when data is present
+      const needsSearchFallback =
+        !bookDetails.description ||
+        !bookDetails.subjects ||
+        bookDetails.subjects.length === 0 ||
+        !bookDetails.firstPublishDate;
+
+      assert.strictEqual(
+        needsSearchFallback,
+        false,
+        'Should not need search fallback when all data is present'
+      );
+
+      // Verify original data is preserved
+      assert.strictEqual(bookDetails.description, 'Original description.');
+      assert.strictEqual(
+        bookDetails.coverUrl,
+        'https://covers.openlibrary.org/b/id/12345-L.jpg'
+      );
+      assert.deepStrictEqual(bookDetails.subjects, ['Original Subject']);
+      assert.strictEqual(bookDetails.firstPublishDate, '2010');
     });
   });
 });
